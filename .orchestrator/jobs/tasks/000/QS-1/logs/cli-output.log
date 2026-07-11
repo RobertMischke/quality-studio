@@ -1,0 +1,3 @@
+﻿[16:30:11.466] [orchestrator] [decision] [quota-admission] launch: quota projection ignored (5-hour projected/used ratio exceeds 4 near window start)
+
+[16:32:57.380] [orchestrator] [watchdog] "QS-1: Concept elaboration - review-meta JSON schema, hierarchy contract, embedding path, package naming, honest slice plan" (codex): no output for 59s yet. No action needed unless this repeats. [phase=TurnInProgress silence=59s allowed=180/600s]
