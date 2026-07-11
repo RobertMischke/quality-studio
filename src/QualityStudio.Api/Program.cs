@@ -16,6 +16,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.Configure<RepositoryOptions>(builder.Configuration.GetSection(RepositoryOptions.SectionName));
 builder.Services.AddSingleton<RepositoryAccess>();
 builder.Services.AddSingleton<StalenessEvaluator>();
+builder.Services.Configure<AgentStudioTaskOptions>(
+    builder.Configuration.GetSection(AgentStudioTaskOptions.SectionName));
+builder.Services.AddSingleton(serviceProvider =>
+    serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AgentStudioTaskOptions>>().Value);
+builder.Services.AddSingleton<HttpClient>();
+builder.Services.AddSingleton<AgentStudioTaskClient>();
 var corsOptions = builder.Configuration.GetSection(RepositoryOptions.SectionName).Get<RepositoryOptions>()
     ?? new RepositoryOptions();
 builder.Services.AddCors(options => options.AddPolicy("dev-frontend", policy =>
@@ -31,6 +37,8 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
         FileNotFoundException => (StatusCodes.Status404NotFound, "File not found"),
         DirectoryNotFoundException => (StatusCodes.Status503ServiceUnavailable, "Repository unavailable"),
         StalenessScanException => (StatusCodes.Status422UnprocessableEntity, "Repository scan failed"),
+        HttpRequestException => (StatusCodes.Status502BadGateway, "Agent Studio request failed"),
+        InvalidOperationException => (StatusCodes.Status503ServiceUnavailable, "Agent Studio target unavailable"),
         _ => (StatusCodes.Status500InternalServerError, "Unexpected API error"),
     };
     var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("QualityStudio.Api.Errors");
@@ -88,6 +96,31 @@ app.MapPost("/api/review", () => Results.Problem(
     statusCode: StatusCodes.Status501NotImplemented,
     title: "Review runner unavailable",
     detail: "Review triggering requires the optional QS-6 review runner, which is not available in this build."));
+
+app.MapGet("/api/handover", (AgentStudioTaskOptions options) => Results.Ok(
+    new HandoverConfigurationResponse(options.IsTargetConfigured, options.DryRun, options.Project)));
+
+app.MapPost("/api/handover", async (
+    HandoverRequest request,
+    RepositoryAccess repository,
+    AgentStudioTaskClient client,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    var stopwatch = Stopwatch.StartNew();
+    var filePath = repository.NormalizeRelativePath(request.FilePath);
+    repository.ResolveFile(filePath);
+    var result = await client.CreateTaskAsync(new FindingTaskTemplate(
+        request.FindingSummary,
+        filePath,
+        request.FindingText,
+        request.ReviewKind,
+        request.MetaReference), cancellationToken);
+    logger.LogInformation(new EventId(1300, "FindingHandedOver"),
+        "Handed over finding for {FilePath} and {ReviewKind}; DryRun={DryRun}, TaskId={TaskId}, ElapsedMilliseconds={ElapsedMilliseconds}",
+        filePath, request.ReviewKind, result.DryRun, result.TaskId, stopwatch.ElapsedMilliseconds);
+    return Results.Ok(result);
+});
 
 app.Run();
 

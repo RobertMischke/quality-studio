@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { FindingSeverity, QualityApi, ReviewFinding, ReviewKind, ReviewMetaDocument, ReviewState, TreeNode } from './quality-api';
+import { FindingSeverity, HandoverRequest, QualityApi, ReviewFinding, ReviewKind, ReviewMetaDocument, ReviewState, TreeNode } from './quality-api';
 
 type FlatNode = TreeNode & { depth: number; state: ReviewState; decorations: { kind: string; state: ReviewState; label: string }[] };
 
@@ -21,6 +21,7 @@ export class App {
   readonly codeScrollTop = signal(0);
   readonly activeKind = signal<ReviewKind>('code');
   readonly selectedFinding = signal<ReviewFinding | null>(null);
+  readonly handoverStatus = signal<Record<string, string>>({});
   readonly lineHeight = 22;
   readonly treeRows = computed(() => this.flatten(this.api.tree()));
   readonly filteredRows = computed(() => {
@@ -87,6 +88,26 @@ export class App {
   }
 
   selectFinding(finding: ReviewFinding): void { this.selectedFinding.set(finding); }
+
+  async createTask(finding: ReviewFinding): Promise<void> {
+    const key = `${this.activeKind()}:${finding.id}`;
+    this.handoverStatus.update(status => ({ ...status, [key]: 'Creating…' }));
+    const request: HandoverRequest = {
+      findingSummary: finding.title,
+      filePath: finding.locations[0]?.path ?? this.api.file()?.path ?? this.selected(),
+      findingText: `${finding.description}\n\nRecommendation: ${finding.recommendation}`,
+      reviewKind: this.activeKind(),
+      metaReference: `${this.selectedNode()?.kinds[this.activeKind()]?.metaPath ?? 'review-meta'}#${finding.id}`,
+    };
+    try {
+      const result = await this.api.createTask(request);
+      this.handoverStatus.update(status => ({ ...status, [key]: result.dryRun ? 'Dry run printed' : `Created ${result.taskId}` }));
+      console.info(JSON.stringify({ event: 'qs.handover.completed', findingId: key, dryRun: result.dryRun, taskId: result.taskId }));
+    } catch (error) {
+      this.handoverStatus.update(status => ({ ...status, [key]: 'Create failed' }));
+      console.error(JSON.stringify({ event: 'qs.handover.failed', findingId: key, reason: error instanceof Error ? error.message : 'request failed' }));
+    }
+  }
 
   findingTitle(findings: ReviewFinding[]): string { return findings.map(finding => `${finding.severity.toUpperCase()}: ${finding.title}`).join('\n'); }
 

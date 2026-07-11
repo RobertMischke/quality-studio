@@ -13,6 +13,8 @@ export interface ReviewFinding { id: string; aspect: string; severity: FindingSe
 export interface ReviewMetaDocument { reviewedAt: string; kind: ReviewKind; reviewer: { agent: string; model: string }; grade: { score: number; band: string; rationale: string }; summary: string; findings: ReviewFinding[]; }
 export interface FileDocument { path: string; content: string; metaDocuments: ReviewMetaDocument[]; }
 export interface ScanReport { files: unknown[]; freshCount: number; staleCount: number; missingCount: number; }
+export interface HandoverRequest { findingSummary: string; filePath: string; findingText: string; reviewKind: string; metaReference: string; }
+export interface HandoverResult { dryRun: boolean; taskId: string | null; card: { title: string }; }
 
 const demoFile = `using System.Diagnostics;
 using AgentOrchestrator.CodeQuality;
@@ -75,6 +77,8 @@ export class QualityApi {
   readonly scan = signal<ScanReport>({ files: [], freshCount: 8, staleCount: 4, missingCount: 3 });
   readonly connected = signal(false);
   readonly loading = signal(false);
+  readonly handoverConfigured = signal(false);
+  readonly handoverDryRun = signal(true);
 
   async loadTree(): Promise<void> {
     try {
@@ -87,6 +91,7 @@ export class QualityApi {
     } catch (error) {
       console.warn(JSON.stringify({ event: 'qs.data.demo-fallback', reason: error instanceof Error ? error.message : 'API unavailable' }));
     }
+    await this.loadHandoverConfiguration();
   }
 
   async loadFile(path: string): Promise<void> {
@@ -98,5 +103,19 @@ export class QualityApi {
       this.file.set({ path, content: demoFile, metaDocuments: demoMeta });
       console.warn(JSON.stringify({ event: 'qs.data.file-demo-fallback', path, reason: error instanceof Error ? error.message : 'API unavailable' }));
     } finally { this.loading.set(false); }
+  }
+
+  async createTask(request: HandoverRequest): Promise<HandoverResult> {
+    return firstValueFrom(this.http.post<HandoverResult>('/api/handover', request));
+  }
+
+  private async loadHandoverConfiguration(): Promise<void> {
+    try {
+      const configuration = await firstValueFrom(this.http.get<{ targetConfigured: boolean; dryRun: boolean }>('/api/handover'));
+      this.handoverConfigured.set(configuration.targetConfigured);
+      this.handoverDryRun.set(configuration.dryRun);
+    } catch {
+      this.handoverConfigured.set(false);
+    }
   }
 }

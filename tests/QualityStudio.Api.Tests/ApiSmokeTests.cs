@@ -43,6 +43,25 @@ public sealed class ApiSmokeTests : IAsyncLifetime
         Assert.Equal("missing", file.GetProperty("state").GetString());
     }
 
+    [Fact]
+    public async Task Handover_dry_run_returns_the_would_be_card()
+    {
+        using var client = application!.CreateClient();
+        using var response = await client.PostAsJsonAsync("/api/handover", new
+        {
+            findingSummary = "Avoid repeated work",
+            filePath = "Sample.cs",
+            findingText = "Cache the repeated operation.",
+            reviewKind = "performance",
+            metaReference = ".quality/reviews/sample.review-meta.performance.json#repeated-work",
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.True(json.GetProperty("dryRun").GetBoolean());
+        Assert.Equal("Fix: Avoid repeated work in Sample.cs", json.GetProperty("card").GetProperty("title").GetString());
+    }
+
     public async ValueTask InitializeAsync()
     {
         Directory.CreateDirectory(repositoryRoot);
@@ -93,7 +112,13 @@ public sealed class ApiSmokeTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?> { ["QualityStudio:RepositoryRoot"] = root }));
+                new Dictionary<string, string?>
+                {
+                    ["QualityStudio:RepositoryRoot"] = root,
+                    ["AgentStudio:BaseUrl"] = "http://agent-studio.test",
+                    ["AgentStudio:ClientId"] = "quality-studio-test",
+                    ["AgentStudio:Project"] = "QS",
+                }));
         }
     }
 }

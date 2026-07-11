@@ -64,3 +64,12 @@ public sealed record KindStateResponse(
 }
 
 public sealed record FileResponse(string Path, string Content, IReadOnlyList<JsonElement> MetaDocuments);
+
+public sealed record HandoverConfigurationResponse(bool TargetConfigured, bool DryRun, string? Project);
+
+public sealed record HandoverRequest(
+    string FindingSummary,
+    string FilePath,
+    string FindingText,
+    string ReviewKind,
+    string MetaReference);

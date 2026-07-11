@@ -1,5 +1,8 @@
 # Quality Studio API
 
+The finding handover endpoints and Agent Studio configuration are documented in
+[concepts/handover.md](concepts/handover.md).
+
 Run the development host from the repository root:
 
 ```powershell
