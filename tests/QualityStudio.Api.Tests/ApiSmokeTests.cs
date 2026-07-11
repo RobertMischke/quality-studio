@@ -62,11 +62,29 @@ public sealed class ApiSmokeTests : IAsyncLifetime
         Assert.Equal("Fix: Avoid repeated work in Sample.cs", json.GetProperty("card").GetProperty("title").GetString());
     }
 
+    [Fact]
+    public async Task Inputs_lists_resolved_project_inputs_for_each_kind()
+    {
+        using var client = application!.CreateClient();
+        using var response = await client.GetAsync("/api/inputs", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var code = json.GetProperty("kinds").GetProperty("code");
+        var input = Assert.Single(code.GetProperty("inputs").EnumerateArray());
+        Assert.Equal("sample-rules", input.GetProperty("id").GetString());
+        Assert.Equal("project", input.GetProperty("scope").GetString());
+        Assert.Empty(json.GetProperty("kinds").GetProperty("security").GetProperty("inputs").EnumerateArray());
+    }
+
     public async ValueTask InitializeAsync()
     {
         Directory.CreateDirectory(repositoryRoot);
         await File.WriteAllTextAsync(Path.Combine(repositoryRoot, "Sample.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
         await File.WriteAllTextAsync(Path.Combine(repositoryRoot, "Sample.cs"), "namespace Sample; public static class Greeter { public static string Hello() => \"hello\"; }");
+        Directory.CreateDirectory(Path.Combine(repositoryRoot, ".quality", "inputs"));
+        await File.WriteAllTextAsync(Path.Combine(repositoryRoot, ".quality", "inputs", "sample.md"),
+            "---\nid: sample-rules\nkinds: [code]\nlevels: [file]\npriority: 10\n---\nPrefer explicit names.\n");
         await RunGitAsync("init", "--quiet");
         application = new TestApplication(repositoryRoot);
     }

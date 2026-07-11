@@ -30,6 +30,9 @@ curl "http://127.0.0.1:5127/api/file?path=src/QualityStudio.Api/appsettings.json
 curl "http://127.0.0.1:5127/api/scan"
 # 200 {"files":[...],"freshCount":0,"staleCount":0,"missingCount":20}
 
+curl "http://127.0.0.1:5127/api/inputs"
+# 200 {"level":"file","kinds":{"code":{"inputs":[...],"omissions":[...]},...}}
+
 curl -X POST "http://127.0.0.1:5127/api/review" -H "Content-Type: application/json" -d "{}"
 # 501 {"title":"Review runner unavailable","status":501,"detail":"Review triggering requires the optional QS-6 review runner, which is not available in this build."}
 ```

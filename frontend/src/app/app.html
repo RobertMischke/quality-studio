@@ -60,6 +60,13 @@
           @for (finding of meta.findings; track finding.id) { <button class="finding-card" [class.selected]="selectedFinding()?.id === finding.id" (click)="selectFinding(finding)"><span class="severity" [class]="'severity ' + finding.severity">{{ finding.severity }}</span><b>{{ finding.title }}</b><p>{{ finding.description }}</p></button> } @empty { <div class="empty-findings">No findings in this review.</div> }
           @if (selectedFinding(); as finding) { <section class="finding-detail" aria-live="polite"><span class="eyebrow">Selected finding</span><h3>{{ finding.title }}</h3><p>{{ finding.description }}</p>@if (finding.evidence) { <b>Evidence</b><p>{{ finding.evidence }}</p> }<b>Recommendation</b><p>{{ finding.recommendation }}</p>@if (api.handoverConfigured()) { <button class="create-task-button" (click)="createTask(finding)" [disabled]="handoverStatus()[activeKind() + ':' + finding.id] === 'Creating…'">{{ handoverStatus()[activeKind() + ':' + finding.id] || (api.handoverDryRun() ? 'Create task · dry run' : 'Create task') }}</button> }</section> }
         } @else { <div class="empty-findings">This file has no review metadata.</div> }
+        <div class="section-title"><span>Review inputs</span><small>{{ activeInputs()?.includedCharacters ?? 0 }} / {{ activeInputs()?.budgetCharacters ?? 12000 }} chars</small></div>
+        <section class="inputs-panel" aria-label="Resolved review inputs">
+          @for (input of activeInputs()?.inputs ?? []; track input.scope + ':' + input.id) {
+            <div class="lane input-row"><span class="severity">{{ input.scope }}</span><b>{{ input.id }}</b><small>Priority {{ input.priority }} · {{ input.includedContent.length }} chars@if (input.truncated) { · truncated}</small></div>
+          } @empty { <div class="empty-findings">No applicable guidelines for this review.</div> }
+          @if ((activeInputs()?.omissions?.length ?? 0) > 0) { <div class="input-warning">{{ activeInputs()?.omissions?.length }} override or budget notice(s). Nothing was silently dropped.</div> }
+        </section>
         <div class="section-title"><span>Repository scan</span><small>Now</small></div>
         <div class="scan-grid"><div><i class="status fresh"></i><b>{{ api.scan().freshCount }}</b><span>Fresh</span></div><div><i class="status stale"></i><b>{{ api.scan().staleCount }}</b><span>Stale</span></div><div><i class="status missing"></i><b>{{ api.scan().missingCount }}</b><span>Missing</span></div></div>
       </div>

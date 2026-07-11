@@ -300,4 +300,9 @@ internal sealed class QualityStudioEventSource : EventSource
     [Event(5, Level = EventLevel.Error)]
     public void ReviewFailed(string filePath, string kind, string errorType, string message) =>
         WriteEvent(5, filePath, kind, errorType, message);
+
+    [Event(6, Level = EventLevel.Informational)]
+    public void InputsResolved(string filePath, string kind, int inputCount, int omissionCount,
+        int includedCharacters, int budgetCharacters) =>
+        WriteEvent(6, filePath, kind, inputCount, omissionCount, includedCharacters, budgetCharacters);
 }

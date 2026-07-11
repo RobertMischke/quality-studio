@@ -16,6 +16,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.Configure<RepositoryOptions>(builder.Configuration.GetSection(RepositoryOptions.SectionName));
 builder.Services.AddSingleton<RepositoryAccess>();
 builder.Services.AddSingleton<StalenessEvaluator>();
+builder.Services.AddSingleton<InputResolver>();
 builder.Services.Configure<AgentStudioTaskOptions>(
     builder.Configuration.GetSection(AgentStudioTaskOptions.SectionName));
 builder.Services.AddSingleton(serviceProvider =>
@@ -37,6 +38,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
         FileNotFoundException => (StatusCodes.Status404NotFound, "File not found"),
         DirectoryNotFoundException => (StatusCodes.Status503ServiceUnavailable, "Repository unavailable"),
         StalenessScanException => (StatusCodes.Status422UnprocessableEntity, "Repository scan failed"),
+        InputFormatException => (StatusCodes.Status422UnprocessableEntity, "Review input is invalid"),
         HttpRequestException => (StatusCodes.Status502BadGateway, "Agent Studio request failed"),
         InvalidOperationException => (StatusCodes.Status503ServiceUnavailable, "Agent Studio target unavailable"),
         _ => (StatusCodes.Status500InternalServerError, "Unexpected API error"),
@@ -79,6 +81,25 @@ app.MapGet("/api/file", async (string? path, RepositoryAccess repository, Cancel
     var absolute = repository.ResolveFile(relative);
     var content = await File.ReadAllTextAsync(absolute, cancellationToken);
     return Results.Ok(new FileResponse(relative, content, repository.ReadMetaDocuments(relative)));
+});
+
+app.MapGet("/api/inputs", (RepositoryAccess repository, InputResolver resolver,
+    Microsoft.Extensions.Options.IOptions<RepositoryOptions> configured, ILogger<Program> logger) =>
+{
+    var stopwatch = Stopwatch.StartNew();
+    var options = configured.Value;
+    var globalDirectory = string.IsNullOrWhiteSpace(options.GlobalInputsDirectory)
+        ? Environment.GetEnvironmentVariable("QUALITY_GLOBAL_INPUTS")
+        : options.GlobalInputsDirectory;
+    var kinds = Enum.GetValues<ReviewKind>().ToDictionary(
+        kind => kind.ToString().ToLowerInvariant(),
+        kind => resolver.Resolve(repository.Root, kind.ToString(), ReviewLevel.File,
+            globalDirectory, options.InputBudgetCharacters),
+        StringComparer.Ordinal);
+    logger.LogInformation(new EventId(1102, "InputsResolved"),
+        "Resolved review inputs for {KindCount} kinds in {ElapsedMilliseconds} ms",
+        kinds.Count, stopwatch.ElapsedMilliseconds);
+    return Results.Ok(new { level = "file", kinds });
 });
 
 app.MapGet("/api/scan", async (RepositoryAccess repository, StalenessEvaluator evaluator,

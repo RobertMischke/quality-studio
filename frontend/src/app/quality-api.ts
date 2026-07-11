@@ -15,6 +15,9 @@ export interface FileDocument { path: string; content: string; metaDocuments: Re
 export interface ScanReport { files: unknown[]; freshCount: number; staleCount: number; missingCount: number; }
 export interface HandoverRequest { findingSummary: string; filePath: string; findingText: string; reviewKind: string; metaReference: string; }
 export interface HandoverResult { dryRun: boolean; taskId: string | null; card: { title: string }; }
+export interface ResolvedInput { id: string; source: string; scope: 'global' | 'project'; priority: number; includedContent: string; content: string; truncated: boolean; }
+export interface InputOmission { id: string; source: string; reason: string; omittedCharacters: number; }
+export interface ResolvedInputs { kind: ReviewKind; level: string; budgetCharacters: number; includedCharacters: number; complete: boolean; inputs: ResolvedInput[]; omissions: InputOmission[]; }
 
 const demoFile = `using System.Diagnostics;
 using AgentOrchestrator.CodeQuality;
@@ -79,14 +82,16 @@ export class QualityApi {
   readonly loading = signal(false);
   readonly handoverConfigured = signal(false);
   readonly handoverDryRun = signal(true);
+  readonly inputs = signal<Partial<Record<ReviewKind, ResolvedInputs>>>({});
 
   async loadTree(): Promise<void> {
     try {
-      const [tree, scan] = await Promise.all([
+      const [tree, scan, inputs] = await Promise.all([
         firstValueFrom(this.http.get<{ nodes: TreeNode[] }>('/api/tree?path=')),
         firstValueFrom(this.http.get<ScanReport>('/api/scan')),
+        firstValueFrom(this.http.get<{ kinds: Record<ReviewKind, ResolvedInputs> }>('/api/inputs')),
       ]);
-      this.tree.set(tree.nodes); this.scan.set(scan); this.connected.set(true);
+      this.tree.set(tree.nodes); this.scan.set(scan); this.inputs.set(inputs.kinds); this.connected.set(true);
       console.info(JSON.stringify({ event: 'qs.data.tree-loaded', nodeCount: tree.nodes.length, source: 'api' }));
     } catch (error) {
       console.warn(JSON.stringify({ event: 'qs.data.demo-fallback', reason: error instanceof Error ? error.message : 'API unavailable' }));

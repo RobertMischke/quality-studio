@@ -51,32 +51,59 @@ internal static class QualityCli
     {
         try
         {
-            var (file, kind) = ParseReviewArguments(args);
+            var options = ParseReviewArguments(args);
+            var globalInputs = options.GlobalInputsDirectory ?? Environment.GetEnvironmentVariable("QUALITY_GLOBAL_INPUTS");
+            if (options.ExplainInputs)
+            {
+                var resolved = new InputResolver().Resolve(Directory.GetCurrentDirectory(), options.Kind,
+                    ReviewLevel.File, globalInputs, options.BudgetCharacters);
+                PrintInputExplanation(resolved);
+                return 0;
+            }
+
             var stopwatch = Stopwatch.StartNew();
-            var result = await new ReviewRunner().ReviewAsync(new ReviewRequest(file, kind));
+            var result = await new ReviewRunner().ReviewAsync(new ReviewRequest(
+                options.File, options.Kind, GlobalInputsDirectory: globalInputs,
+                InputBudgetCharacters: options.BudgetCharacters));
             Console.WriteLine($"quality review: wrote {Path.GetRelativePath(Directory.GetCurrentDirectory(), result.MetaPath)} | {stopwatch.ElapsedMilliseconds} ms");
             return 0;
         }
-        catch (Exception exception) when (exception is ArgumentException or FileNotFoundException or ReviewResponseException or ReviewRunException)
+        catch (Exception exception) when (exception is ArgumentException or FileNotFoundException or InputFormatException or ReviewResponseException or ReviewRunException)
         {
             Console.Error.WriteLine($"quality review failed: {exception.Message}");
             return 2;
         }
     }
 
-    private static (string File, string Kind) ParseReviewArguments(string[] args)
+    private static ReviewCliOptions ParseReviewArguments(string[] args)
     {
         string? file = null;
         var kind = "code";
+        string? globalInputsDirectory = null;
+        var budgetCharacters = InputResolver.DefaultBudgetCharacters;
+        var explainInputs = false;
         for (var index = 0; index < args.Length; index++)
         {
             if (args[index] == "--kind" && index + 1 < args.Length)
             {
                 kind = args[++index];
             }
-            else if (args[index] == "--kind")
+            else if (args[index] == "--global-inputs" && index + 1 < args.Length)
             {
-                throw new ArgumentException("Missing value for --kind.");
+                globalInputsDirectory = args[++index];
+            }
+            else if (args[index] == "--input-budget" && index + 1 < args.Length &&
+                     int.TryParse(args[++index], out var parsedBudget))
+            {
+                budgetCharacters = parsedBudget;
+            }
+            else if (args[index] == "--explain-inputs")
+            {
+                explainInputs = true;
+            }
+            else if (args[index] is "--kind" or "--global-inputs" or "--input-budget")
+            {
+                throw new ArgumentException($"Missing or invalid value for {args[index]}.");
             }
             else if (args[index].StartsWith("-", StringComparison.Ordinal) || file is not null)
             {
@@ -88,7 +115,22 @@ internal static class QualityCli
             }
         }
 
-        return (file ?? throw new ArgumentException("A review file is required."), kind);
+        return new ReviewCliOptions(file ?? throw new ArgumentException("A review file is required."), kind,
+            globalInputsDirectory, budgetCharacters, explainInputs);
+    }
+
+    private static void PrintInputExplanation(ResolvedInputs resolved)
+    {
+        Console.WriteLine($"quality review inputs: kind {resolved.Kind} | level {resolved.Level} | budget {resolved.IncludedCharacters}/{resolved.BudgetCharacters} characters");
+        foreach (var input in resolved.Inputs)
+        {
+            var reason = input.Truncated ? "applicable; truncated to budget" : "applicable";
+            Console.WriteLine($"inject   {input.Scope,-7} {input.Id} | priority {input.Priority} | {input.IncludedContent.Length}/{input.Content.Length} chars | {reason} | {input.Source}");
+        }
+        foreach (var omission in resolved.Omissions)
+        {
+            Console.WriteLine($"omit     {omission.Id} | {omission.Reason} | {omission.OmittedCharacters} chars | {omission.Source}");
+        }
     }
 
     private static (string Path, StalenessEvaluatorOptions Options) ParseScanArguments(string[] args)
@@ -132,5 +174,8 @@ internal static class QualityCli
     }
 
     private static void PrintUsage() => Console.WriteLine(
-        "Usage:\n  quality scan [path] [--kind code] [--include <glob>]...\n  quality review <file> [--kind code|security|performance]");
+        "Usage:\n  quality scan [path] [--kind code] [--include <glob>]...\n  quality review <file> [--kind code|security|performance] [--global-inputs <directory>] [--input-budget <characters>] [--explain-inputs]");
+
+    private sealed record ReviewCliOptions(string File, string Kind, string? GlobalInputsDirectory,
+        int BudgetCharacters, bool ExplainInputs);
 }

@@ -119,6 +119,10 @@ The default globs cover common programming and web source extensions. Repeat
 `--include` to replace them with a custom set, or select a sibling review kind
 with `--kind security` or `--kind performance`.
 
+## Review inputs
+
+Global and repository-owned Markdown guidelines can be resolved into review prompts with deterministic overrides and an explicit size budget. See [`docs/review-inputs.md`](docs/review-inputs.md) for the `.quality/inputs/` convention and `--explain-inputs` usage.
+
 ## Repository layout
 
 - `src/AgentOrchestrator.CodeQuality/` contains the core quality model library.

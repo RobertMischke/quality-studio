@@ -176,6 +176,10 @@ public sealed class ReviewRunnerTests
         var cancellationToken = TestContext.Current.CancellationToken;
         await WithReviewFileAsync(async (root, file) =>
         {
+            var inputDirectory = Path.Combine(root, ".quality", "inputs");
+            Directory.CreateDirectory(inputDirectory);
+            await File.WriteAllTextAsync(Path.Combine(inputDirectory, "security.md"),
+                "---\nid: secure-boundaries\nkinds: [security]\nlevels: [file]\npriority: 50\n---\nTreat external data as untrusted.\n", cancellationToken);
             var agent = new FakeAgent(response: ReviewResponseParserTests.ValidResponse.Replace(
                 "\"findings\": []", "\"findings\": [" + ReviewResponseParserTests.ValidFinding + "]", StringComparison.Ordinal));
 
@@ -192,6 +196,10 @@ public sealed class ReviewRunnerTests
             Assert.Equal("correctness-1", json.GetProperty("findings")[0].GetProperty("id").GetString());
             Assert.Contains("Global rule.", agent.Prompt, StringComparison.Ordinal);
             Assert.Contains("Project rule.", agent.Prompt, StringComparison.Ordinal);
+            Assert.Contains("Treat external data as untrusted.", agent.Prompt, StringComparison.Ordinal);
+            var standard = Assert.Single(json.GetProperty("reviewInputs").GetProperty("standards").EnumerateArray());
+            Assert.Equal("secure-boundaries", standard.GetProperty("id").GetString());
+            Assert.Equal("project", standard.GetProperty("scope").GetString());
             Assert.Equal(root, agent.WorkingDirectory);
         });
     }

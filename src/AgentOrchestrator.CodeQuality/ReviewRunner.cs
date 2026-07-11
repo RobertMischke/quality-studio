@@ -12,9 +12,11 @@ public sealed record ReviewRequest(
     ReviewLevel Level = ReviewLevel.File,
     string? GlobalGuidelines = null,
     string? ProjectGuidelines = null,
-    string? RepositoryRoot = null);
+    string? RepositoryRoot = null,
+    string? GlobalInputsDirectory = null,
+    int InputBudgetCharacters = InputResolver.DefaultBudgetCharacters);
 
-public sealed record ReviewResult(string MetaPath, string ReviewedHash, string RunId);
+public sealed record ReviewResult(string MetaPath, string ReviewedHash, string RunId, ResolvedInputs Inputs);
 
 public sealed class ReviewRunner
 {
@@ -22,15 +24,18 @@ public sealed class ReviewRunner
     private readonly IReviewAgent _agent;
     private readonly ReviewPromptBuilder _promptBuilder;
     private readonly ReviewResponseParser _responseParser;
+    private readonly InputResolver _inputResolver;
 
     public ReviewRunner(
         IReviewAgent? agent = null,
         ReviewPromptBuilder? promptBuilder = null,
-        ReviewResponseParser? responseParser = null)
+        ReviewResponseParser? responseParser = null,
+        InputResolver? inputResolver = null)
     {
         _agent = agent ?? new CodingAgentReviewAgent();
         _promptBuilder = promptBuilder ?? new ReviewPromptBuilder();
         _responseParser = responseParser ?? new ReviewResponseParser();
+        _inputResolver = inputResolver ?? new InputResolver();
     }
 
     public async Task<ReviewResult> ReviewAsync(ReviewRequest request, CancellationToken cancellationToken = default)
@@ -53,11 +58,17 @@ public sealed class ReviewRunner
 
         var relativePath = Path.GetRelativePath(root, file).Replace('\\', '/');
         var fileContent = await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false);
+        var inputs = _inputResolver.Resolve(root, request.Kind, request.Level,
+            request.GlobalInputsDirectory, request.InputBudgetCharacters);
+        QualityStudioEventSource.Log.InputsResolved(relativePath, request.Kind, inputs.Inputs.Count,
+            inputs.Omissions.Count, inputs.IncludedCharacters, inputs.BudgetCharacters);
+        var globalGuidelines = Combine(inputs.Guidelines("global"), request.GlobalGuidelines);
+        var projectGuidelines = Combine(inputs.Guidelines("project"), request.ProjectGuidelines);
         var prompt = _promptBuilder.Build(
             relativePath,
             request.Kind,
-            request.GlobalGuidelines,
-            request.ProjectGuidelines,
+            globalGuidelines,
+            projectGuidelines,
             fileContent);
         var initialContentHash = await ReviewSubjectHasher.ComputeFileContentHashAsync(file, cancellationToken)
             .ConfigureAwait(false);
@@ -87,7 +98,8 @@ public sealed class ReviewRunner
                 initialContentHash,
                 reviewedHash,
                 prompt,
-                agentResult.RunId);
+                agentResult.RunId,
+                inputs);
             var metaPath = GetMetaPath(file, request.Kind, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(metaPath)!);
             var temporaryPath = metaPath + ".tmp-" + Guid.NewGuid().ToString("N");
@@ -98,7 +110,7 @@ public sealed class ReviewRunner
                 cancellationToken).ConfigureAwait(false);
             File.Move(temporaryPath, metaPath, true);
             QualityStudioEventSource.Log.ReviewCompleted(relativePath, request.Kind, agentResult.RunId, stopwatch.ElapsedMilliseconds);
-            return new ReviewResult(metaPath, reviewedHash, agentResult.RunId);
+            return new ReviewResult(metaPath, reviewedHash, agentResult.RunId, inputs);
         }
         catch (Exception exception)
         {
@@ -116,7 +128,8 @@ public sealed class ReviewRunner
         string contentHash,
         string reviewedHash,
         string prompt,
-        string runId)
+        string runId,
+        ResolvedInputs inputs)
     {
         var promptHash = "sha256:" + Sha256(prompt);
         var effectiveHash = Sha256($"quality-studio-review-inputs-v1\0{kind}\0{promptHash}");
@@ -165,9 +178,24 @@ public sealed class ReviewRunner
                     ["canonicalization"] = "quality-studio-review-inputs-v1",
                     ["value"] = effectiveHash,
                 },
-                ["complete"] = true,
-                ["standards"] = new JsonArray(),
-                ["omitted"] = new JsonArray(),
+                ["complete"] = inputs.Complete,
+                ["standards"] = new JsonArray(inputs.Inputs.Where(input => input.IncludedContent.Length > 0).Select(input => (JsonNode)new JsonObject
+                {
+                    ["id"] = input.Id,
+                    ["scope"] = input.Scope,
+                    ["priority"] = input.Priority,
+                    ["source"] = input.Source,
+                    ["contentHash"] = "sha256:" + Sha256(input.Content),
+                    ["includedCharacters"] = input.IncludedContent.Length,
+                    ["truncated"] = input.Truncated,
+                }).ToArray()),
+                ["omitted"] = new JsonArray(inputs.Omissions.Select(omission => (JsonNode)new JsonObject
+                {
+                    ["id"] = omission.Id,
+                    ["source"] = omission.Source,
+                    ["reason"] = omission.Reason,
+                    ["omittedCharacters"] = omission.OmittedCharacters,
+                }).ToArray()),
                 ["prompt"] = new JsonObject
                 {
                     ["id"] = $"file-{kind}-review",
@@ -193,6 +221,11 @@ public sealed class ReviewRunner
 
     private static string Sha256(string value) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    private static string Combine(string resolved, string? supplied) =>
+        string.IsNullOrWhiteSpace(supplied)
+            ? resolved
+            : resolved == "(none supplied)" ? supplied.Trim() : resolved + "\n\n" + supplied.Trim();
 
     private static void EnsureContained(string root, string file)
     {

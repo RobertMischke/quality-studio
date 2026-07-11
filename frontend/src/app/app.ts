@@ -51,6 +51,7 @@ export class App {
     return this.codeLines().slice(start, start + 80).map((text, i) => ({ text, number: start + i + 1, top: (start + i) * this.lineHeight, findings: markers.get(start + i + 1) ?? [] }));
   });
   readonly selectedNode = computed(() => this.flatten(this.api.tree(), true).find(n => n.path === this.selected()));
+  readonly activeInputs = computed(() => this.api.inputs()[this.activeKind()] ?? null);
 
   constructor() {
     effect(() => document.documentElement.dataset['theme'] = this.theme());
