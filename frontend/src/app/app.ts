@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { QualityApi, ReviewState, TreeNode } from './quality-api';
+import { FindingSeverity, QualityApi, ReviewFinding, ReviewKind, ReviewMetaDocument, ReviewState, TreeNode } from './quality-api';
 
-type FlatNode = TreeNode & { depth: number; state: ReviewState };
+type FlatNode = TreeNode & { depth: number; state: ReviewState; decorations: { kind: string; state: ReviewState; label: string }[] };
 
 @Component({
   selector: 'app-root',
@@ -19,6 +19,8 @@ export class App {
   readonly query = signal('');
   readonly scrollTop = signal(0);
   readonly codeScrollTop = signal(0);
+  readonly activeKind = signal<ReviewKind>('code');
+  readonly selectedFinding = signal<ReviewFinding | null>(null);
   readonly lineHeight = 22;
   readonly treeRows = computed(() => this.flatten(this.api.tree()));
   readonly filteredRows = computed(() => {
@@ -30,9 +32,22 @@ export class App {
     return this.filteredRows().slice(start, start + 40).map((node, i) => ({ node, top: (start + i) * 30 }));
   });
   readonly codeLines = computed(() => this.api.file()?.content.split(/\r?\n/) ?? []);
+  readonly activeMeta = computed(() => this.api.file()?.metaDocuments.find(meta => meta.kind === this.activeKind()) ?? null);
+  readonly availableMeta = computed(() => this.api.file()?.metaDocuments ?? []);
+  readonly activeState = computed(() => this.selectedNode()?.kinds[this.activeKind()]?.direct ?? 'missing');
+  readonly findingsByLine = computed(() => {
+    const map = new Map<number, ReviewFinding[]>();
+    const path = this.api.file()?.path;
+    for (const finding of this.activeMeta()?.findings ?? []) for (const location of finding.locations) {
+      if (location.path !== path || !location.range) continue;
+      for (let line = location.range.start.line; line <= location.range.end.line; line++) map.set(line, [...(map.get(line) ?? []), finding]);
+    }
+    return map;
+  });
   readonly visibleLines = computed(() => {
     const start = Math.max(0, Math.floor(this.codeScrollTop() / this.lineHeight) - 10);
-    return this.codeLines().slice(start, start + 80).map((text, i) => ({ text, number: start + i + 1, top: (start + i) * this.lineHeight }));
+    const markers = this.findingsByLine();
+    return this.codeLines().slice(start, start + 80).map((text, i) => ({ text, number: start + i + 1, top: (start + i) * this.lineHeight, findings: markers.get(start + i + 1) ?? [] }));
   });
   readonly selectedNode = computed(() => this.flatten(this.api.tree(), true).find(n => n.path === this.selected()));
 
@@ -57,9 +72,27 @@ export class App {
     this.selected.set(path);
     this.codeScrollTop.set(0);
     this.api.loadFile(path).then(() => {
+      const kinds = this.api.file()?.metaDocuments.map(meta => meta.kind) ?? [];
+      if (!kinds.includes(this.activeKind())) this.activeKind.set(kinds[0] ?? 'code');
+      this.selectedFinding.set(null);
       if (track) requestAnimationFrame(() => this.measure('qs.file.first-content', start, 150));
     });
   }
+
+  selectKind(kind: ReviewKind): void {
+    const start = performance.now();
+    this.activeKind.set(kind);
+    this.selectedFinding.set(null);
+    requestAnimationFrame(() => this.measure('qs.review.aspect-switch', start, 50));
+  }
+
+  selectFinding(finding: ReviewFinding): void { this.selectedFinding.set(finding); }
+
+  findingTitle(findings: ReviewFinding[]): string { return findings.map(finding => `${finding.severity.toUpperCase()}: ${finding.title}`).join('\n'); }
+
+  severity(findings: ReviewFinding[]): FindingSeverity { return findings[0]?.severity ?? 'info'; }
+
+  reviewed(meta: ReviewMetaDocument): string { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(meta.reviewedAt)); }
 
   setTheme(): void {
     const next = this.theme() === 'dark' ? 'light' : 'dark';
@@ -71,7 +104,8 @@ export class App {
     const result: FlatNode[] = [];
     for (const node of nodes) {
       const state = (node.kinds['code']?.overall ?? Object.values(node.kinds)[0]?.overall ?? 'missing') as ReviewState;
-      result.push({ ...node, depth, state });
+      const decorations = Object.entries(node.kinds).map(([kind, value]) => ({ kind, state: value.overall, label: `${kind}: ${value.band ? `${value.band}, ` : ''}${value.overall}` }));
+      result.push({ ...node, depth, state, decorations });
       if ((all || this.expanded().has(node.id)) && node.children.length) result.push(...this.flatten(node.children, all, depth + 1));
     }
     return result;
