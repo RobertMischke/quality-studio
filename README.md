@@ -69,7 +69,8 @@ diff**; Code Quality is the **standing truth of the codebase**.
 
 ### 4. Neighbors in the universe
 
-- Project graph (component/module structure) supplies the hierarchy's upper levels.
+- Project graph may consume and visualize the hierarchy's derived upper levels;
+  workspace/solution/compiler structure remains the source of truth.
 - Style-guide layer supplies the per-technology rules that reviews check against.
 - Retro-grading and the remote review pipeline of Agent Studio are execution paths.
 
@@ -92,7 +93,8 @@ and want to see the quality characteristics of what was built.
 - **Research box (open on purpose):** whether a code graph joins as a graphical meta
   layer is a research topic, not a pre-decision.
 - The package stays usable standalone (iterate code over code: write meta JSONs,
-  drive the CLI runner); agent integration runs through Coding Agent Runner.
+  drive the CLI runner). Review execution runs through Coding Agent Runner;
+  finding handover uses Agent Studio's normal task mutation path.
 
 ## Status
 

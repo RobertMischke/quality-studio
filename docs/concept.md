@@ -94,6 +94,7 @@ treat an unsupported `schemaVersion` as current.
     "subjectInputs": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/subjectInput"
       }
@@ -147,6 +148,27 @@ treat an unsupported `schemaVersion` as current.
         "properties": {
           "aggregate": {
             "$ref": "#/$defs/aggregate"
+          },
+          "subjectInputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "selector": {
+                  "enum": ["aggregate-control", "aggregate-members"]
+                }
+              },
+              "required": ["selector"]
+            },
+            "contains": {
+              "type": "object",
+              "properties": {
+                "selector": { "const": "aggregate-members" }
+              },
+              "required": ["selector"]
+            },
+            "minContains": 1,
+            "maxContains": 1
           }
         },
         "required": ["aggregate"]
@@ -159,6 +181,112 @@ treat an unsupported `schemaVersion` as current.
             "aggregate": true
           },
           "required": ["aggregate"]
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "const": "function"
+              }
+            },
+            "required": ["level"]
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "object",
+            "properties": {
+              "symbolId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": ["symbolId"]
+          },
+          "subjectInputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "selector": {
+                  "oneOf": [
+                    { "const": "file" },
+                    {
+                      "type": "string",
+                      "pattern": "^symbol:(?:[A-Za-z0-9._~-]|%[A-F0-9]{2})+$"
+                    }
+                  ]
+                }
+              },
+              "required": ["selector"]
+            },
+            "contains": {
+              "type": "object",
+              "properties": {
+                "selector": {
+                  "type": "string",
+                  "pattern": "^symbol:(?:[A-Za-z0-9._~-]|%[A-F0-9]{2})+$"
+                }
+              },
+              "required": ["selector"]
+            },
+            "minContains": 1,
+            "maxContains": 1
+          }
+        }
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "object",
+            "not": {
+              "type": "object",
+              "properties": {
+                "symbolId": true
+              },
+              "required": ["symbolId"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "object",
+            "properties": {
+              "level": { "const": "file" }
+            },
+            "required": ["level"]
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "subjectInputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "selector": { "const": "file" }
+              },
+              "required": ["selector"]
+            }
+          }
         }
       }
     }
@@ -214,7 +342,7 @@ treat an unsupported `schemaVersion` as current.
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^qs-v1/(angular|dotnet)/(project|module|namespace|file|function)/[^\\s]+$"
+          "pattern": "^qs-v1/(angular|dotnet)/(project|module|namespace|file|function)/[a-f0-9]{64}$"
         },
         "adapter": {
           "enum": ["angular", "dotnet"]
@@ -273,9 +401,16 @@ treat an unsupported `schemaVersion` as current.
           "$ref": "#/$defs/repoPath"
         },
         "selector": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
+          "oneOf": [
+            { "const": "file" },
+            { "const": "aggregate-control" },
+            { "const": "aggregate-members" },
+            {
+              "type": "string",
+              "pattern": "^symbol:(?:[A-Za-z0-9._~-]|%[A-F0-9]{2})+$",
+              "maxLength": 2000
+            }
+          ]
         },
         "contentHash": {
           "$ref": "#/$defs/sha256String"
@@ -534,7 +669,7 @@ treat an unsupported `schemaVersion` as current.
       "properties": {
         "unitId": {
           "type": "string",
-          "pattern": "^qs-v1/"
+          "pattern": "^qs-v1/(angular|dotnet)/file/[a-f0-9]{64}$"
         },
         "path": {
           "$ref": "#/$defs/repoPath"
@@ -566,12 +701,14 @@ treat an unsupported `schemaVersion` as current.
       "properties": {
         "members": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/aggregateMember"
           }
         },
         "excluded": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/exclusion"
           }
@@ -604,10 +741,12 @@ descendants; a folder does not silently become a sixth review level.
   to that one canonical spelling. Symlinks resolving outside the worktree are
   not followed; in-repository aliases are de-duplicated by real path. The repo
   root is represented as `.` when a unit anchor has no non-empty relative path.
-- Unit IDs have the form
-  `qs-v1/<adapter>/<level>/<identity-component>/...`. Each component is UTF-8
-  RFC 3986 percent-encoded with uppercase hex; even `/` inside a component is
-  encoded as `%2F`. Identity tuples below are ordered and therefore reproducible.
+- Unit IDs have the exact form `qs-v1/<adapter>/<level>/<identity-hash>`.
+  Build the level's identity tuple below as a JSON array of strings, with a
+  child's literal parent `unit.id` as a tuple value (never a flattened parent
+  tuple). Serialize the array with RFC 8785 and set `identity-hash` to lowercase
+  SHA-256 hex of those UTF-8 bytes. The conformance vector below fixes the bytes
+  and expected values; this algorithm cannot change within schema v1.
 - `.gitignore` is respected. Meta sidecars, `.quality`, package caches, compiler
   outputs, generated sources identified by the compiler/framework, and configured
   test/fixture exclusions do not become review subjects. Exclusion reasons are
@@ -622,29 +761,69 @@ descendants; a folder does not silently become a sixth review level.
 | --- | --- |
 | Project | Each named `projects` entry in the nearest `angular.json`; `(angular.json path, project name)`. The workspace is a UI container when it has multiple entries. The project anchor is the entry's `root`, falling back to the workspace root when empty. |
 | Module | The project root module plus compiler-discovered `@NgModule` declarations and lazy route boundaries (`loadChildren`/`loadComponent`); `(project ID, boundary kind, declaring repo path, exported symbol)`. The root sentinel tuple is `(project ID, root, project root, root)`. An NgModule owns its declarations. A lazy standalone boundary owns files below its entry directory unless an explicit NgModule owns them. Everything else falls back to the project root module. Ties are an adapter diagnostic, resolved ordinally by module ID, never by a registry. |
-| Namespace | A logical directory under the owning module anchor; `(module ID, normalized relative directory)`. `.` represents files at the anchor. This is deliberately not the TypeScript `namespace` keyword. It makes the feature-folder structure the stable browsing contract for NgModule and standalone applications alike. |
+| Namespace | The canonical repository directory of an owned file; `(Module ID, repo directory)`. `.` represents the repository root. This is deliberately not the TypeScript `namespace` keyword. It remains derivable even when an NgModule declares a file outside its own directory and makes feature folders the stable browsing contract for NgModule and standalone applications alike. |
 | File | Reviewable project source selected by Angular/TypeScript configuration; `(module ID, repo path)`. `.ts`, component templates, and styles may be individual file units. A TypeScript component review may list its `templateUrl`/`styleUrl` files as additional subject inputs, as in the worked example. Tests and generated files are excluded by default but can be included explicitly by review-run options. |
-| Function | Named TypeScript AST declarations: functions, methods, constructors, accessors, and functions/arrows assigned to a named binding; `(file ID, TypeScript symbol name, normalized signature)`. Overload signatures share the implementation unit. Anonymous callbacks and lambdas are locations within the nearest named function/file in v1, not unstable ordinal-based function units. Decorators and attached documentation are part of the hashed syntax span. |
+| Function | Named executable TypeScript AST declarations: functions, methods, constructors, accessors, and functions/arrows assigned to a named binding; `(File ID, literal typescript-symbol-key-v1, symbol key)`. Overload signatures share the implementation unit. Anonymous callbacks and lambdas are locations within the nearest named function/file in v1, not unstable ordinal-based units. Decorators and attached documentation are part of the hashed review span, but not the identity key. |
 
 Standalone components require no synthetic registry entry: they belong to a lazy
 route module when that boundary exists and otherwise to the root module, with
 feature directories supplying Namespace nodes. Changes to `angular.json`, route
 configuration, or compiler ownership invalidate affected aggregate manifests.
 
+The Angular Module tuple values are closed in v1: root is
+`[Project ID,"root",project-root-path,"root"]`; NgModule is
+`[Project ID,"ng-module",declaring-ts-path,exported-class-name]`; lazy children
+and component boundaries use `[Project ID,"lazy-children" or
+"lazy-component",statically-resolved-loaded-entry-path,exported-name]`.
+Unresolvable dynamic routes remain in the nearest derived module and emit a
+diagnostic; adapters do not invent a boundary.
+
+Angular anchors are deterministic. Project `unit.path` is the `angular.json` path
+and its placement anchor is the configured project root. A root Module uses the
+project-root directory for both `unit.path` and placement; an `@NgModule` uses its
+declaring `.ts` path and directory; a lazy boundary uses the statically resolved
+loaded entry path and its directory. Namespace path/anchor is its logical
+directory. File and Function `unit.path` is the source path and their placement
+anchor is its directory.
+
+`typescript-symbol-key-v1` is lowercase SHA-256 of the RFC 8785 object containing
+the declaration kind from the fixed set `function`, `method`, `constructor`,
+`get`, `set`, `function-binding`, or `arrow-binding`; the ordered exact names and
+kinds of lexical named ancestors; the declaration name; and raw TypeScript header
+tokens excluding trivia, decorators, documentation, and the body. An overload
+group uses the implementation header. It never uses compiler pretty-printed type
+text, so a TypeScript upgrade cannot silently reformat IDs. The resulting
+`symbolId` is `typescript-symbol-key-v1:<64 lowercase hex>`.
+
 ### .NET solution adapter
 
 | Level | Derivation and identity tuple |
 | --- | --- |
-| Project | Each discovered or explicitly selected `.sln`/`.slnx`; `(solution repo path)`. If none exists, one deterministic synthetic repository project contains all discovered MSBuild projects and uses `(repo root, literal synthetic-dotnet-project)` as its stable identity; the sorted project paths belong in its aggregate manifest, not its ID. Multiple solution files are separate Project roots, not an arbitrary winner. |
+| Project | Each discovered or explicitly selected `.sln`/`.slnx`; `(solution repo path)`. If none exists, one deterministic synthetic repository project contains all discovered MSBuild projects and uses `(literal ., literal synthetic-dotnet-project)` as its stable identity; the sorted project paths belong in its aggregate manifest, not its ID. Multiple solution files are separate Project roots, not an arbitrary winner. |
 | Module | Each solution member `.csproj`, evaluated through MSBuild; `(Project ID, project repo path)`. Target frameworks are build variants of one module. A linked compile file receives a distinct File identity in every owning module. Project references are graph edges, not parent/child levels. |
 | Namespace | Roslyn's fully qualified semantic namespace, including `<global>`; `(Module ID, namespace name)`. File-scoped and block namespaces normalize to the same identity. If a file contributes to multiple namespaces, the browser shows an alias beneath each while every alias points to one canonical File unit and one sidecar. |
 | File | Evaluated `Compile` items after standard generated/output exclusions; `(Module ID, repo path)`. Partial types do not merge files: each physical source remains independently reviewable. |
-| Function | Roslyn documentation-comment ID for methods, constructors, operators, conversions, and accessors; `(File ID, documentation ID)`. A local function uses `(containing documentation ID, local name, normalized signature, syntax span start)` because Roslyn has no public documentation ID for it. Lambdas/anonymous methods remain locations on their containing function in v1. |
+| Function | Roslyn documentation-comment ID for methods, constructors, operators, conversions, and accessors; `(File ID, literal roslyn-doc-id-v1, documentation ID)`. A local function uses `(File ID, literal csharp-local-key-v1, local key)` because Roslyn has no public documentation ID for it. Lambdas/anonymous methods remain locations on their containing function in v1. |
 
 MSBuild evaluation failures, missing projects, ambiguous case aliases, and files
 outside the repository are diagnostics, not guessed hierarchy. A file projected
 under multiple namespaces keeps the same `unit.id`; aggregate member lists
 de-duplicate that ID.
+
+.NET Project `unit.path` is its solution path (or `.` for the synthetic project),
+with the containing directory as placement anchor. Module path is its `.csproj`
+and its anchor is that file's directory. Because a semantic namespace, including
+`<global>`, may span unrelated folders, Namespace `unit.path` is deliberately the
+owning `.csproj` path and its placement anchor is the module directory; source
+locations remain on findings. File and Function paths are their source file and
+anchor directory.
+
+`csharp-local-key-v1` is lowercase SHA-256 of an RFC 8785 object containing the
+containing documentation ID, ordered named local-function ancestors, local name,
+and raw C# declaration-header tokens excluding trivia, attributes, documentation,
+and the body. No line/span offset or compiler pretty-printer output participates.
+Function `symbolId` stores the Roslyn documentation ID, or
+`csharp-local-key-v1:<64 lowercase hex>` for a local function.
 
 ## Staleness contract
 
@@ -656,30 +835,36 @@ separately as Git decoration.
 
 | State | Leaf File/Function | Project/Module/Namespace aggregate |
 | --- | --- | --- |
-| `fresh` | Current canonical subject manifest equals `reviewedHash`. | Current member IDs/hashes and aggregate control inputs exactly match the stored manifests. Empty-to-empty is fresh when its controls also match. |
-| `partially-stale` | Not applicable. | At least one stored member still exists with the same hash **and** a member or aggregate control input is changed, added, or deleted. |
-| `stale` | Unit still derives, but its manifest differs; symbol extraction failure also makes a Function stale. | Manifest differs and no stored member remains valid, or the aggregate anchor/identity can no longer be derived reliably. |
+| `fresh` | Current canonical subject manifest equals `reviewedHash`. | Current transitive File-leaf IDs/hashes, exclusions, and aggregate controls exactly match the stored manifests. Empty-to-empty is fresh when its exclusions and controls also match. |
+| `partially-stale` | Not applicable. | At least one stored File leaf still exists with the same leaf hash **and** a leaf, exclusion, or aggregate control input is changed, added, or deleted. |
+| `stale` | Unit still derives and is supported, but its manifest differs. | Manifest differs and no stored File leaf remains valid. |
 | `missing` | Unit derives but the requested kind has no meta file. | Unit derives but the requested kind has no aggregate meta file. This is displayed as “not reviewed,” not as F. |
-| `unsupported` | Bytes/syntax cannot be canonicalized by v1. | A required member cannot be derived or hashed. |
-| `orphaned` | Meta exists but its unit no longer derives. | Aggregate meta exists but its unit no longer derives. It is reported outside the current hierarchy. |
+| `unsupported` | Current bytes/syntax cannot be canonicalized by v1. | A current File leaf or required control cannot be derived or hashed by the adapter. |
+| `orphaned` | A valid meta document exists but its unit ID no longer derives. | Same; it is reported outside the current hierarchy, not as stale. |
+| `invalid` | Stored JSON/schema/hash invariants cannot be validated. | Same; no grade or finding is treated as trustworthy. |
 
-For aggregates the evaluator compares by `unitId`, then reports `changed`,
-`added`, and `deleted` member and control-input lists. A rename is one deleted and
-one added member.
+For aggregates the evaluator compares the sorted transitive File-leaf manifest by
+`unitId`, then reports `changed`, `added`, and `deleted` leaf, exclusion, and
+control-input lists. A rename is one deleted and one added leaf. Immediate
+hierarchy state is a separate roll-up and is not used as the coverage manifest.
 The historical grade remains visible with “last reviewed” wording, but a partial
 or stale grade MUST NOT use fresh colors or be included in a current-grade
 average. No parent grade is recalculated from child grades.
 
-`reviewInputs.effectiveHash` is compared separately with today's resolved
-standards and prompt. A mismatch adds `inputs-stale` (with changed/added/deleted
-standard IDs) to any of the content states above. `complete: false` adds
-`inputs-incomplete`. This separation answers whether code moved, the briefing
-moved, or both. It also prevents a policy edit from masquerading as a source edit.
+For any otherwise valid meta document whose inputs can be resolved,
+`reviewInputs.effectiveHash` is compared separately with today's standards and
+prompt. A mismatch adds `inputs-stale` (with changed/added/deleted standard IDs)
+to its content state. `complete: false` adds `inputs-incomplete`. This separation
+answers whether code moved, the briefing moved, or both. It also prevents a
+policy edit from masquerading as a source edit.
 
-When a File or Function is not fresh, stored ranges are historical anchors. The
-editor may show the text and finding in a stale panel, but it MUST disable exact
-inline/gutter placement until a best-effort remap is explicitly labeled and the
-review is rerun. Hash or schema parse errors fail closed as stale/invalid, never
+States are mutually exclusive with precedence `invalid` → `orphaned` →
+`unsupported` → `missing` → content comparison (`fresh`, `partially-stale`, or
+`stale`). Repository-wide adapter failure is a scan error, not a fabricated unit
+state. When a File or Function is not fresh, stored ranges are historical
+anchors. The editor may show the text and finding in a stale panel, but it MUST
+disable exact inline/gutter placement until a best-effort remap is explicitly
+labeled and the review is rerun. Hash or schema parse errors are `invalid`, never
 fresh. Partial staleness is per kind: a stale performance aggregate says nothing
 about the code or security sibling.
 
@@ -825,8 +1010,13 @@ Resolution is deterministic:
    and never silently truncate a document body.
 5. Normalize each complete Markdown body with the source-text rules, hash it, and
    persist ID, winning scope, version, and hash in `reviewInputs.standards`.
-   Effective-hash inputs also include the versioned prompt template. This makes a
-   run auditable even when a global standard is not committed to the target repo.
+   Effective-hash inputs also include the versioned prompt template. This proves
+   which input bytes informed a run and detects later drift even when a global
+   standard is not committed to the target repo; it does not preserve those
+   external bytes. Reproducing the historical briefing requires the source owner
+   to retain the matching version/hash, so global input directories SHOULD use
+   version control or a content-addressed store. The UI reports an unavailable
+   historical body honestly instead of presenting current text as the old input.
 
 ## Product core: augmented code browsing
 
@@ -835,7 +1025,8 @@ The primary surface is a three-pane engineer workspace, not a dashboard:
 - The left pane opens at repository/workspace roots and incrementally expands
   projects, modules, logical namespaces/folders, files, and functions. Every
   reviewable node shows separate code/security/performance chips with grade and
-  `fresh`, `partial`, `stale`, or `missing` state. Presentation-only folder nodes
+  `fresh`, `partial`, `stale`, `missing`, `unsupported`, or `invalid` state;
+  orphaned artifacts live in a diagnostics view. Presentation-only folder nodes
   show explicitly derived descendant state. Git HEAD/index/worktree decorations
   coexist with, but never replace, quality state.
 - The center is a real viewport-rendered editor (CodeMirror 6 is the v1 target)
@@ -853,7 +1044,8 @@ The primary surface is a three-pane engineer workspace, not a dashboard:
   same actions as right click. Focus, selection, expanded state, and loading state
   are distinct and screen-reader named.
 - Context actions are scoped: open, review this unit/kind, scan subtree, explain
-  inputs, copy canonical path/ID, and hand over selected fresh findings. Errors
+  inputs, copy canonical path/ID, and hand over selected findings (stale selections
+  require confirmation). Errors
   remain attached to the node/action and can be retried.
 
 ### Performance requirements and technical path
@@ -903,23 +1095,31 @@ it does not invent a second mutation path.
 ```json
 {
   "contractVersion": 1,
-  "idempotencyKey": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "idempotencyKey": "sha256:806d5bd840b31a979b8e3f2140af95bb93404fbe3790fedf94356db37d6ebae8",
   "targetProjectId": "PROJ-016",
   "source": {
     "repositoryId": "agent-orc/quality-studio",
     "repositoryUrl": "https://github.com/agent-orc/quality-studio",
     "revision": "4f3c2b1",
     "workingTreeDirty": false,
-    "file": "src/Orders/Services/OrderPricingService.cs",
-    "reviewedContentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    "currentContentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    "reviewedHash": "sha256:89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567",
-    "metaPath": "src/Orders/Services/.quality/reviews/files/file.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.review-meta.performance.json",
+    "unitId": "qs-v1/dotnet/file/d5d4d28d4abba920cb58b39cb7831fddb9e37d28c9eb3a9959c2ec41ce4590e7",
+    "level": "file",
+    "unitPath": "src/Orders/Services/OrderPricingService.cs",
+    "reviewedManifestHash": "sha256:3baec4e2eab4f419a02c4242d96059972998cc31b82cd589a11fc4c494d61d30",
+    "currentManifestHash": "sha256:3baec4e2eab4f419a02c4242d96059972998cc31b82cd589a11fc4c494d61d30",
+    "files": [
+      {
+        "path": "src/Orders/Services/OrderPricingService.cs",
+        "reviewedContentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "currentContentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    ],
+    "metaPath": "src/Orders/Services/.quality/reviews/files/file.787c31f88bf0d42fe6e85aba59a1db122e157d7cd3bb5968a741701df8a3ba50.review-meta.performance.json",
     "schemaVersion": 1,
     "reviewedAt": "2026-07-11T15:04:18.023Z",
     "kind": "performance",
     "sourceState": "fresh",
-    "backlink": "https://quality.local/quality/repos/agent-orc%2Fquality-studio/file?path=src%2FOrders%2FServices%2FOrderPricingService.cs&kind=performance&finding=serialized-price-lookups"
+    "backlink": "https://agent-orchestrator.dev/quality/repos/agent-orc%2Fquality-studio/file?path=src%2FOrders%2FServices%2FOrderPricingService.cs&kind=performance&finding=serialized-price-lookups"
   },
   "findings": [
     {
@@ -928,13 +1128,17 @@ it does not invent a second mutation path.
       "aspect": "latency",
       "severity": "high",
       "title": "Independent lookups run sequentially",
-      "description": "Each item waits for the previous remote lookup.",
-      "recommendation": "Use bounded concurrency while preserving cancellation.",
+      "description": "Each item waits for the previous remote lookup, so latency is approximately N times one lookup.",
+      "evidence": "GetPriceAsync is awaited within the foreach body.",
+      "recommendation": "Issue bounded concurrent lookups and await them together, preserving cancellation and service limits.",
       "locations": [
         {
           "path": "src/Orders/Services/OrderPricingService.cs",
-          "startLine": 41,
-          "endLineExclusive": 42
+          "range": {
+            "start": { "line": 41, "column": 13 },
+            "end": { "line": 41, "column": 77 }
+          },
+          "symbolId": "M:Orders.Services.OrderPricingService.CalculateAsync(System.Collections.Generic.IReadOnlyList{Orders.Order},System.Threading.CancellationToken)"
         }
       ]
     }
@@ -951,18 +1155,27 @@ it does not invent a second mutation path.
 }
 ```
 
-The selected findings are immutable snapshots, not live pointers. One handover
-may batch findings only from the same meta document and primary file; cross-file
-selections create separate tasks. The idempotency key is lowercase SHA-256 over
-UTF-8 `quality-studio/handover/v1\0<metaPath>\0<reviewedHash>\0<sorted finding
-IDs joined by comma>`. Retries reuse it; Agent Studio or the client rejects a
-duplicate rather than creating another card.
+The selected findings are lossless copies of the review-meta `finding` objects—
+not summaries or live pointers. One handover
+may batch findings only from the same meta document; cross-meta selections create
+separate tasks. `source.files` is the de-duplicated snapshot of every located file
+in the selection. It contains the primary file for File/Function findings, may
+contain several files for a higher-level finding, and may be empty when an honest
+Project/Module/Namespace finding has no source location. In that case `unitId`,
+`unitPath`, the aggregate `reviewedManifestHash`/`currentManifestHash`, meta path,
+full finding, and backlink still make the task actionable. The idempotency key is
+lowercase SHA-256 over UTF-8
+`quality-studio/handover/v1\0<metaPath>\0<reviewedManifestHash>\0<sorted finding IDs joined by comma>`.
+`<reviewedManifestHash>` is the complete prefixed field value. The example key is
+calculated from its displayed source and finding. Retries reuse it; Agent Studio
+or the client rejects a duplicate rather than creating another card.
 
 Fresh findings hand over directly. A stale review is allowed only after an
-explicit confirmation, and carries both hashes plus `sourceState: stale`; unknown
-current content blocks handover. The task prompt always tells the agent to inspect
-current code. The backlink uses the configured Quality Studio origin and stable
-repo/path/kind/finding query, never a hard-coded development host.
+explicit confirmation, and carries reviewed/current manifest hashes plus
+`sourceState: stale`; an unknown current manifest hash blocks handover. The task
+prompt always tells the agent to inspect current code. The backlink uses the
+configured Quality Studio origin and stable unit/path/kind/finding query, never a
+hard-coded development host.
 
 Configuration supplies Agent Studio base URL, target project, authentication, and
 client ID. Dry-run is the default until configured. Mutation failure leaves the
@@ -978,19 +1191,22 @@ hierarchy, hashing, staleness, and sweep-planning core without coupling the
 package to the Quality Studio UI. `AgentOrchestrator.Quality` is too broad, while
 `AgentOrchestrator.QualityStudio` would make a standalone core sound UI-specific.
 
-At 2026-07-11 16:55 UTC, NuGet's exact-ID flat-container endpoint for
+At 2026-07-11 17:24 UTC, NuGet's exact-ID flat-container endpoint for
 [`AgentOrchestrator.CodeQuality`](https://api.nuget.org/v3-flatcontainer/agentorchestrator.codequality/index.json)
-returned HTTP 404, and autocomplete returned no ID match. NuGet documents that
-the [package base-address resource](https://learn.microsoft.com/en-us/nuget/api/package-base-address-resource)
-enumerates listed and unlisted versions, so no public version was observed at
-that instant. This is an availability observation, not a reservation or a
-guarantee that first publish will succeed.
+returned HTTP 404, and NuGet autocomplete returned no matching package ID. NuGet
+documents that the
+[package base-address resource](https://learn.microsoft.com/en-us/nuget/api/package-base-address-resource)
+enumerates listed and unlisted versions, so no public listed or unlisted version
+was observed at that instant. This is an availability observation, not a
+reservation or a guarantee that first publish will succeed.
 
 An adjacent package,
 [`AgentOrchestrator.Runtime`](https://www.nuget.org/packages/AgentOrchestrator.Runtime),
-already exists under an owner that must be confirmed as part of this ecosystem.
-Before release, the operator MUST confirm namespace ownership, enable the
-appropriate NuGet organization/owners, seek an
+is owned on NuGet.org by `o_kabir_chy` and is not marked verified. A shared
+prefix conveys no ownership; the operator MUST confirm whether that account is
+authorized for this ecosystem. Before release, the operator MUST confirm
+namespace ownership and prefix-reservation rights, enable the appropriate NuGet
+organization/owners, seek an
 [ID-prefix reservation](https://learn.microsoft.com/en-us/nuget/nuget-org/id-prefix-reservation)
 where eligible, and repeat the exact-ID check. Documentation should use the final
 ID now; QS-2 may build/pack it but MUST NOT publish it.
@@ -1046,7 +1262,8 @@ capability. Its English outline is:
 
 The founding prompt used legacy `CQ` numbers; the repository and already-created
 cards use `QS`, so this plan preserves QS-2 through QS-13. Estimates are focused
-engineering days after dependencies are available: S=1-2, M=3-5, L=6-10. They
+engineering days after dependencies are available: S=1-2, M=3-5, L=6-10,
+XL=11-15. They
 include tests and documentation but not queue time, external review, or release
 approval. Separate API, frontend, augmented-browser, and handover slices are
 intentional; calling them one “Studio embedding” slice would hide the work and
@@ -1056,21 +1273,22 @@ contradict the decided direction.
 | --- | --- | --- |
 | QS-2 Core scaffold + release rails | S (2 days); none | .NET core/test solution, taxonomy enums, deterministic/package metadata and SourceLink, warning-clean build/test/pack CI, Apache metadata, and a retained package artifact. Mirrors the Token Economy release-rail shape but has no publish credential, tag, or automatic NuGet release. Proof: clean build/test/pack on Windows and Linux. |
 | QS-3 Review-meta contract v1 | M (5 days); QS-1, QS-2 | Records/serializer, strict schema artifact, canonical text/manifest hashing, sample files, and compatibility policy matching this document. Proof: schema-valid examples, round trips, line-ending/encoding/hash vectors, malformed/invariant tests. |
-| QS-4 Staleness engine + scan | M (4 days); QS-3 | Streaming discovery and per-kind fresh/stale/missing/unsupported/orphaned evaluation, aggregate-ready diagnostics, and CI-friendly `quality scan`. Proof: fixtures plus a 5,000-file scan showing lazy bounded hashing. |
-| QS-5 Hierarchy + aggregation | L (8 days); QS-3, QS-4 | Angular and .NET adapters, canonical IDs, all five levels, sibling kinds, aggregate manifests, partial-staleness truth table, and `scan --by-level`. Proof: multi-project Angular and multi-project .NET fixtures including standalone components, namespaces, linked files, and member add/change/delete cases. |
-| QS-6 File review sweep runner v1 | L (7 days); QS-3, Coding Agent Runner | One-file `code`/`security`/`performance` runs, strict structured response parsing, versioned prompt hooks, atomic sidecar writes, cancellation and dry-run. Proof: parsing/prompt tests, opt-in live-agent test, and one committed sample; no module review yet. |
+| QS-4 Pure staleness engine | M (4 days); QS-3 | Adapter-neutral manifest comparison and per-kind fresh/partial/stale/missing/unsupported/orphaned/invalid evaluation over supplied unit snapshots; no repository discovery claim. Proof: hash vectors and exhaustive leaf/aggregate/input-state tables, including precedence. |
+| QS-5 Hierarchy, aggregation + scan | XL (15 days); QS-3, QS-4 | Two explicit internal milestones (.NET adapter, then Angular adapter), canonical IDs, all five levels, sidecar discovery/binding, transitive leaf/control/exclusion manifests, bounded hashing, and CI-friendly `quality scan --by-level`. Proof: multi-project fixtures including standalone components, semantic namespaces, linked/multi-parent files, a 5,000-file scan, and leaf/control/exclusion add-change-delete cases. Do not collapse the second adapter when the first one works. |
+| QS-6 File review sweep runner v1 | L (8 days); QS-3, QS-5, Coding Agent Runner | A shippable `code`-only checkpoint first, followed by `performance` and separately loadable `security` kind profiles; strict structured response parsing, versioned prompt hooks, atomic sidecar writes, cancellation, and dry-run. Proof: parsing/prompt tests, opt-in live-agent tests per kind, and one committed sample; no module review yet. |
 | QS-7 Minimal API | M (4 days); QS-4, QS-5; QS-6 optional | Paged tree, file/meta, scan, and optional review endpoints with repo-root confinement, ETags, cancellation, problem details, and structured timing logs. Proof: host smoke tests and curl contract examples. |
-| QS-8 Angular shell + performance rails | L (8 days); QS-7 | Three-pane, accessible, light/dark shell with virtualized incremental tree and viewport editor, Agent Studio visual kinship, Git decorations, trace harness, and `PERF.md`. Proof: production build, both-theme screenshots, 100k-node and 200KB-file p95 budgets. |
+| QS-8 Angular shell + performance rails | XL (12 days); QS-7 | Three-pane, accessible, light/dark shell with custom virtualized incremental tree and viewport editor, Agent Studio visual kinship, Git decorations, trace harness, and `PERF.md`. Proof: production build, keyboard/screen-reader checks, both-theme screenshots, and 100k-node/200KB-file p95 budgets. |
 | QS-9 Augmented browser v1 | L (7 days); QS-8, QS-5 | Per-node kind/grade/staleness meta layer, aspect switcher, inline findings, historical stale mode, and no-refetch overlay switching. Proof: interaction tests/screenshots plus unchanged QS-8 p95 budgets. This is the first product-core UI milestone. |
 | QS-10 Agent Studio handover | M (5 days); QS-7, QS-9, current Agent Studio mutation contract | Configured task client, versioned snapshot mapping, X-Client-Id/auth path, idempotency, dry-run, stale confirmation, UI action, and backlinks. Proof: mock mutation tests, duplicate retry test, dry-run artifact, and optional scratch-project card. |
 | QS-11 Website `/quality` seed | M (3 days); product wording from QS-1 | Self-contained family-styled static page and documented deploy-branch/operator meta-repo step. Proof: local light/dark/accessibility/HTML checks and deployment workflow validation; status copy distinguishes shipped/planned. |
 | QS-12 Code-graph research | S (3-day hard stop); QS-5 fixtures useful | Research report and excluded throwaway spike with initial/incremental/memory measurements; no production dependency. Proof: reproducible output and one evidence-based next-step decision, not a speculative architecture commitment. |
 | QS-13 Global + project review inputs | M (5 days); QS-3, QS-6; QS-7/8 for exposure | Markdown/frontmatter resolver, validation, precedence/tombstones, explicit budget report, effective input hashing, CLI explanation, read-only API/UI view. Proof: resolution/hash/omission tests and an explain-inputs transcript. |
 
-Suggested delivery order is QS-2 → QS-3 → QS-4/QS-6 → QS-5/QS-13 → QS-7 →
-QS-8 → QS-9 → QS-10. QS-11 and the strictly time-boxed QS-12 can proceed in
-parallel once their inputs are stable. Module/project agent review execution is a
-later slice after QS-5; QS-5 only makes hierarchy and aggregate truth honest.
+Suggested delivery order is QS-2 → QS-3 → QS-4 → QS-5 → QS-6/QS-7 → QS-8 →
+QS-9 → QS-10. QS-13 starts after QS-6 and exposes its resolver through QS-7/8;
+QS-11 and the strictly time-boxed QS-12 can proceed in parallel once their inputs
+are stable. Module/project agent review execution is a later slice after QS-5;
+QS-5 only makes hierarchy and aggregate truth honest.
 
 ## Review-meta operational rules and examples
 
@@ -1080,8 +1298,16 @@ JSON Schema cannot express every invariant. A writer and loader MUST additionall
 enforce all of the following:
 
 - `unit.adapter`, `unit.level`, `unit.path`, and `unit.symbolId` agree with the
-  derived `unit.id`; finding IDs and aspect IDs are unique within the document;
-  every `finding.aspect` names an entry in `aspects`.
+  derived `unit.id`; Function units always have `symbolId`. Finding IDs and aspect
+  IDs are unique within the document; every `finding.aspect` names an entry in
+  `aspects`.
+- File documents use only whole-file selectors and include `unit.path` exactly
+  once; companion files are additional inputs. Function documents have exactly
+  one selector at `unit.path` equal to `symbol:` plus the RFC 3986 percent-encoding
+  of `unit.symbolId` (uppercase hex) and MAY add whole-file context inputs.
+  Aggregate documents have exactly one `aggregate-members` input at `unit.path`
+  plus zero or more adapter-derived `aggregate-control` inputs. `(path, selector)`
+  is unique in every document.
 - Paths use the Git-index spelling, `/` separators, no leading `./`, no `..`, and
   are relative to the repository root. Arrays used in hashes are in the canonical
   order defined below, and contain no duplicate identity keys.
@@ -1105,8 +1331,18 @@ enforce all of the following:
   at least one location; higher-level findings MAY use an empty `locations` array
   when no honest source anchor exists.
 - Only Project, Module, and Namespace documents contain `aggregate`. Its grade
-  and findings are that level's own review statement. `members` records coverage;
-  it is not a list from which the grade is mechanically calculated.
+  and findings are that level's own review statement. `members` is the sorted,
+  de-duplicated manifest of every transitive File unit below it, never immediate
+  Module/Namespace review metadata or Function units. Each `subjectHash` is the
+  kind-neutral current File leaf hash defined below and requires no child meta
+  file. Every member is a currently derived descendant with the same adapter and
+  owning Project/Module chain, and its `path` equals that File unit's canonical
+  path. `excluded` is sorted by `(path, reason)` with no duplicates. This manifest
+  records coverage; it is not a list from which the grade is mechanically
+  calculated.
+- `reviewInputs.standards` contains exactly the stored `standardReference` fields
+  in resolver order with unique IDs. `omitted` contains unique IDs in that same
+  resolver order. These arrays are not resorted by a JSON serializer.
 
 ### Granularity, names, and placement
 
@@ -1118,9 +1354,15 @@ case, and collision rules in cross-platform filenames.
 | --- | --- |
 | Project | `<project-root>/.quality/reviews/project.<unit-key>.review-meta.<kind>.json` |
 | Module | `<module-root>/.quality/reviews/module.<unit-key>.review-meta.<kind>.json` |
-| Namespace | `<module-root>/.quality/reviews/namespaces/namespace.<unit-key>.review-meta.<kind>.json` |
+| Namespace | `<namespace-anchor>/.quality/reviews/namespaces/namespace.<unit-key>.review-meta.<kind>.json` |
 | File | `<source-directory>/.quality/reviews/files/file.<unit-key>.review-meta.<kind>.json` |
 | Function | `<source-directory>/.quality/reviews/functions/function.<unit-key>.review-meta.<kind>.json` |
+
+A loader derives this exact path from the validated body. The filename level
+prefix MUST equal `unit.level`, `<unit-key>` MUST equal SHA-256 of `unit.id`, the
+kind suffix MUST equal `kind`, and the containing anchor MUST equal the adapter's
+derived anchor. A second file for the same `(unit.id, kind)` or a valid document
+at the wrong path is `invalid`; discovery never chooses a filesystem-order winner.
 
 File IDs include their compiler/module context, so the unit key prevents a linked
 .NET file compiled by two modules from colliding with itself. The `.quality`
@@ -1132,18 +1374,18 @@ and adapter-identified generated files from source inputs.
 Renames derive a new unit ID and filename. Git may carry the old artifact through
 the rename, but it remains orphaned until rewritten with the new identity; tools
 MUST NOT guess identity from similar content. The namespace filename is anchored
-at its module because a semantic namespace can span several folders. Project and
-module files are the requested aggregate files; namespace uses the same aggregate
-contract.
+in the logical feature directory for Angular and at the owning module for .NET,
+where one semantic namespace can span several folders. Project and module files
+are the requested aggregate files; namespace uses the same aggregate contract.
 
 Multiple kinds are siblings, for example:
 
 ```text
 order-card.component.ts
 .quality/reviews/files/
-  file.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.review-meta.code.json
-  file.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.review-meta.performance.json
-  file.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.review-meta.security.json
+  file.d7170540c0a8a471383c141f3557f7115c684defb559fa37bc48be55905b44a4.review-meta.code.json
+  file.d7170540c0a8a471383c141f3557f7115c684defb559fa37bc48be55905b44a4.review-meta.performance.json
+  file.d7170540c0a8a471383c141f3557f7115c684defb559fa37bc48be55905b44a4.review-meta.security.json
 ```
 
 Each sibling has its own timestamp, reviewer, grade, findings, subject hash, and
@@ -1162,7 +1404,8 @@ file, filesystem timestamps, Git commit, or platform-native line endings.
    LF, and make no other change: no trimming, Unicode normalization, tab
    expansion, or final-newline insertion. Encode the result as UTF-8 without BOM.
 3. For a whole-file selector (`file`), `contentHash` is `sha256:` plus SHA-256 of
-   those bytes. For a compiler-derived symbol selector, hash the exact syntax
+   those bytes. A compiler-derived selector is `symbol:` plus the RFC 3986
+   percent-encoding of `unit.symbolId` with uppercase hex; hash the exact syntax
    span supplied to the reviewer after the same transform, including attached
    attributes/decorators and documentation comments. Companion template/style
    files are separate whole-file entries, not concatenated invisibly.
@@ -1170,18 +1413,31 @@ file, filesystem timestamps, Git commit, or platform-native line endings.
    `{"domain":"quality-studio/reviewed-subject/v1","unitId":<unit.id>,"inputs":<subjectInputs>}`,
    serialize it with RFC 8785 JSON Canonicalization Scheme, hash its UTF-8 bytes,
    and store the lowercase hex digest in `reviewedHash.value`.
-5. For an aggregate, derive immediate child units, recursively calculate each
-   child's current subject hash, sort `aggregate.members` ordinally by `unitId`,
-   and use entries shaped as `{unitId,path,subjectHash}`. SHA-256 the RFC 8785
-   object `{"domain":"quality-studio/aggregate-members/v1","members":<members>}`
+5. For an aggregate, derive every transitive File unit, calculate its kind-neutral
+   File leaf hash, de-duplicate by File ID, sort `aggregate.members` ordinally by
+   `unitId`, and use entries shaped as `{unitId,path,subjectHash}`. A File leaf
+   hash is step 4 applied to that File ID and a single whole-file input for its own
+   normalized source bytes; it never depends on a review-meta file, review kind,
+   standard, prompt, or optional companion context. Templates and styles are
+   their own Angular File leaves. Sort `aggregate.excluded` ordinally by
+   `(path, reason)`, then SHA-256 the RFC 8785 object
+   `{"domain":"quality-studio/aggregate-members/v1","excluded":<excluded>,"members":<members>}`
    and add that digest to `subjectInputs` as an `aggregate-members` selector at
-   the aggregate anchor. Also add normalized whole-file inputs with selector
-   `aggregate-control` for structural files actually reviewed at that level—for
-   example `angular.json`, route/NgModule declarations, a solution, or a
-   `.csproj`. Apply step 4 to this sorted combined input list. Thus project or
+   the aggregate anchor. Its digest MUST equal the value recomputed from the
+   stored `aggregate.members` and `aggregate.excluded`. Also add every required
+   normalized structural file below as an `aggregate-control` selector. Apply
+   step 4 to this sorted combined input list. Thus project or
    dependency configuration changes stale an aggregate even when its source-file
    membership is unchanged, while `aggregate.members` still enables a precise
    partial-staleness explanation.
+
+Required aggregate controls are deterministic: an Angular Project includes its
+`angular.json` and project `tsconfig` chain; an Angular Module includes its root,
+NgModule, or lazy-route declaration plus inherited project configuration. A .NET
+Project includes its solution (if any), all member `.csproj` files, and their
+repo-local evaluated MSBuild imports; a .NET Module includes its `.csproj` and
+repo-local evaluated imports. Namespace aggregates have no additional control
+file. Duplicate control `(path, selector)` pairs are removed before ordinal sort.
 
 Including paths and selectors means a rename or symbol-identity change is stale
 even when text is identical. Hashing normalized reviewer bytes makes the result
@@ -1190,18 +1446,50 @@ of the RFC 8785 object
 `{"domain":"quality-studio/review-inputs/v1","complete":<complete>,"standards":<ordered standards>,"omitted":<resolver-ordered omitted IDs>,"prompt":<prompt>}`.
 It detects briefing changes without misreporting them as code changes.
 
+#### Canonical conformance vector
+
+For an Angular demo project, these tuples and hashes are a byte-for-byte test
+vector (ASCII is UTF-8; JSON strings below contain no insignificant whitespace):
+
+```text
+Project tuple: ["angular.json","demo"]
+Project ID: qs-v1/angular/project/92bc12720b0820bf1c47d6cb781caac0817dcd6cbffe317cc4741c0a51c7ed45
+Root Module tuple: ["qs-v1/angular/project/92bc12720b0820bf1c47d6cb781caac0817dcd6cbffe317cc4741c0a51c7ed45","root",".","root"]
+Root Module ID: qs-v1/angular/module/2a5f35216e470b5208bfc7f6c3dac9432121b22135588dcbb30a7da571893b08
+File tuple: ["qs-v1/angular/module/2a5f35216e470b5208bfc7f6c3dac9432121b22135588dcbb30a7da571893b08","src/a.ts"]
+File ID: qs-v1/angular/file/7b1bd2568ea481d83c2b97850fafd54c0e1981d94960926ab3b4cc5180daec3e
+File unit-key: 2636ec6d366d3cfd50c3e8eafadbb346300fe9d1d7ffb60b6a58e986c070b8cb
+Original text bytes: const x = 1;\r\n
+Normalized text bytes: const x = 1;\n
+contentHash: sha256:95befdd6e691d4d89031a2a2901cc74fc6242109980b060e08ddf87829924483
+RFC 8785 manifest: {"domain":"quality-studio/reviewed-subject/v1","inputs":[{"contentHash":"sha256:95befdd6e691d4d89031a2a2901cc74fc6242109980b060e08ddf87829924483","path":"src/a.ts","selector":"file"}],"unitId":"qs-v1/angular/file/7b1bd2568ea481d83c2b97850fafd54c0e1981d94960926ab3b4cc5180daec3e"}
+reviewedHash.value: 8ea241557b3e9f1bd4f3c9bf88f5e36684fd86a59829e98e11fabadd5462531f
+```
+
+The complete examples below are schema-valid test vectors. Unit IDs, filename
+keys, subject manifests, membership manifests, and effective input hashes are
+calculated from the displayed values. Raw source, standard, prompt, and finding
+fingerprint hashes whose underlying bytes are not shown remain illustrative
+inputs to those calculations.
+
 ### Worked example: Angular component code review
 
+This example assumes Project tuple
+`["frontend/angular.json","storefront"]`, root Module tuple
+`["qs-v1/angular/project/254c8c041896bb3ef68a596323c46467df421c2dffe9be0658c2ca18df62deb7","root","frontend","root"]`,
+and File tuple
+`["qs-v1/angular/module/3ed36aa4e7c06837ce411a6a11a1b353dcaf7f11a2a39583620986c0c552adbf","frontend/src/app/orders/order-card/order-card.component.ts"]`.
 Location:
-`frontend/src/app/orders/order-card/.quality/reviews/files/file.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.review-meta.code.json`.
-Digest values are illustrative but structurally valid.
+`frontend/src/app/orders/order-card/.quality/reviews/files/file.d7170540c0a8a471383c141f3557f7115c684defb559fa37bc48be55905b44a4.review-meta.code.json`.
+The unit ID, filename key, and enclosing manifest hashes are calculated from the
+displayed values.
 
 ```json
 {
   "$schema": "https://agent-orchestrator.dev/quality/schemas/review-meta.v1.schema.json",
   "schemaVersion": 1,
   "unit": {
-    "id": "qs-v1/angular/file/frontend%2Fangular.json/storefront/frontend%2Fsrc%2Fapp%2Forders%2Forder-card%2Forder-card.component.ts",
+    "id": "qs-v1/angular/file/7200855a97c8a21329b305d4a9ee36dcec44ad9799a8d65d038f5aaafd2c524b",
     "adapter": "angular",
     "level": "file",
     "path": "frontend/src/app/orders/order-card/order-card.component.ts",
@@ -1218,7 +1506,7 @@ Digest values are illustrative but structurally valid.
   "reviewedHash": {
     "algorithm": "sha256",
     "canonicalization": "quality-studio-subject-manifest-v1",
-    "value": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+    "value": "e079cb248c236d515741d394399bffc3a401ec7cf18fab7607b2a417e6ccfc07"
   },
   "subjectInputs": [
     {
@@ -1236,7 +1524,7 @@ Digest values are illustrative but structurally valid.
     "effectiveHash": {
       "algorithm": "sha256",
       "canonicalization": "quality-studio-review-inputs-v1",
-      "value": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d"
+      "value": "b733e6f4b5cafe4977ef18dd67b5be1069e74dc9a251eb3358a947443efdb0e4"
     },
     "complete": true,
     "standards": [
@@ -1308,15 +1596,19 @@ Digest values are illustrative but structurally valid.
 
 ### Worked example: .NET service performance review
 
+This example assumes Project tuple `["QualityStudio.slnx"]`, Module tuple
+`["qs-v1/dotnet/project/1111dd746cabfdcf84531563191ceab0bc21df4a4b93568d37a365264a100a40","src/Orders/Orders.csproj"]`,
+and File tuple
+`["qs-v1/dotnet/module/d2a6bc5baf360ab309d942087a702041e00e846b8a8e7140f25d49fba459fb08","src/Orders/Services/OrderPricingService.cs"]`.
 Location:
-`src/Orders/Services/.quality/reviews/files/file.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.review-meta.performance.json`.
+`src/Orders/Services/.quality/reviews/files/file.787c31f88bf0d42fe6e85aba59a1db122e157d7cd3bb5968a741701df8a3ba50.review-meta.performance.json`.
 
 ```json
 {
   "$schema": "https://agent-orchestrator.dev/quality/schemas/review-meta.v1.schema.json",
   "schemaVersion": 1,
   "unit": {
-    "id": "qs-v1/dotnet/file/QualityStudio.slnx/src%2FOrders%2FOrders.csproj/src%2FOrders%2FServices%2FOrderPricingService.cs",
+    "id": "qs-v1/dotnet/file/d5d4d28d4abba920cb58b39cb7831fddb9e37d28c9eb3a9959c2ec41ce4590e7",
     "adapter": "dotnet",
     "level": "file",
     "path": "src/Orders/Services/OrderPricingService.cs",
@@ -1332,7 +1624,7 @@ Location:
   "reviewedHash": {
     "algorithm": "sha256",
     "canonicalization": "quality-studio-subject-manifest-v1",
-    "value": "89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+    "value": "3baec4e2eab4f419a02c4242d96059972998cc31b82cd589a11fc4c494d61d30"
   },
   "subjectInputs": [
     {
@@ -1345,7 +1637,7 @@ Location:
     "effectiveHash": {
       "algorithm": "sha256",
       "canonicalization": "quality-studio-review-inputs-v1",
-      "value": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad"
+      "value": "b059c7ef0ad16b58284200ead34ba0080e807ce76e447902a9a1270a37ed3bdc"
     },
     "complete": true,
     "standards": [
@@ -1416,8 +1708,8 @@ Location:
 
 ### Aggregate example: .NET module code review
 
-Location (with an illustrative 64-hex unit key):
-`src/Orders/.quality/reviews/module.6666666666666666666666666666666666666666666666666666666666666666.review-meta.code.json`.
+Location (the unit key is the actual SHA-256 of the example `unit.id`):
+`src/Orders/.quality/reviews/module.35ed9fc8dc157c6c42093044005fd8fcd538162c87754629af99e59055297183.review-meta.code.json`.
 Project aggregates use the same shape at the project anchor.
 
 ```json
@@ -1425,7 +1717,7 @@ Project aggregates use the same shape at the project anchor.
   "$schema": "https://agent-orchestrator.dev/quality/schemas/review-meta.v1.schema.json",
   "schemaVersion": 1,
   "unit": {
-    "id": "qs-v1/dotnet/module/QualityStudio.slnx/src%2FOrders%2FOrders.csproj",
+    "id": "qs-v1/dotnet/module/d2a6bc5baf360ab309d942087a702041e00e846b8a8e7140f25d49fba459fb08",
     "adapter": "dotnet",
     "level": "module",
     "path": "src/Orders/Orders.csproj",
@@ -1441,7 +1733,7 @@ Project aggregates use the same shape at the project anchor.
   "reviewedHash": {
     "algorithm": "sha256",
     "canonicalization": "quality-studio-subject-manifest-v1",
-    "value": "1111111111111111111111111111111111111111111111111111111111111111"
+    "value": "9c16289f8118e91bd9ec59b787c5f29001f2f0df95a9046beafbb4deece9409c"
   },
   "subjectInputs": [
     {
@@ -1452,14 +1744,14 @@ Project aggregates use the same shape at the project anchor.
     {
       "path": "src/Orders/Orders.csproj",
       "selector": "aggregate-members",
-      "contentHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+      "contentHash": "sha256:1622af5f9e9acc783953b061d7adb1ea0d69843074fcb5caed0c240caad8ec8c"
     }
   ],
   "reviewInputs": {
     "effectiveHash": {
       "algorithm": "sha256",
       "canonicalization": "quality-studio-review-inputs-v1",
-      "value": "2222222222222222222222222222222222222222222222222222222222222222"
+      "value": "8292857715aeef41afb3f7f7ac054b5a0c8e4c46032920d4b3937d01ebdf447c"
     },
     "complete": true,
     "standards": [],
@@ -1491,13 +1783,13 @@ Project aggregates use the same shape at the project anchor.
   "aggregate": {
     "members": [
       {
-        "unitId": "qs-v1/dotnet/namespace/QualityStudio.slnx/src%2FOrders%2FOrders.csproj/Orders",
-        "path": "src/Orders",
+        "unitId": "qs-v1/dotnet/file/2d7e87b5c4d5bca087c051244de04dcb0e7457e32626a230f0ef22e1be5a8d3c",
+        "path": "src/Orders/Order.cs",
         "subjectHash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
       },
       {
-        "unitId": "qs-v1/dotnet/namespace/QualityStudio.slnx/src%2FOrders%2FOrders.csproj/Orders.Services",
-        "path": "src/Orders/Services",
+        "unitId": "qs-v1/dotnet/file/d5d4d28d4abba920cb58b39cb7831fddb9e37d28c9eb3a9959c2ec41ce4590e7",
+        "path": "src/Orders/Services/OrderPricingService.cs",
         "subjectHash": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
       }
     ],
@@ -1515,7 +1807,9 @@ Project aggregates use the same shape at the project anchor.
 
 V1 is credible when a developer can derive an Angular or .NET hierarchy, run a
 file-level review of any built-in kind, commit independently stale-aware sidecars,
-browse them at the code within measured budgets, resolve the exact standards that
-informed them, and hand a finding snapshot to Agent Studio. It does not claim
-automatic remediation, dependency-impact staleness, a production code graph,
-real-time multi-user collaboration, or a computed universal quality score.
+browse them at the code within measured budgets, inspect the exact identifiers and
+content hashes of the standards that informed them, and hand a lossless finding
+snapshot to Agent Studio. It does not claim to recover deleted external standard
+bodies, automatically remediate findings, infer dependency-impact staleness, ship
+a production code graph, support real-time multi-user collaboration, or compute a
+universal quality score.
