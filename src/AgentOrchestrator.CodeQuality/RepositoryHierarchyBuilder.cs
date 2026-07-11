@@ -89,9 +89,15 @@ public static partial class RepositoryHierarchyBuilder
                     relativeSource);
                 ns.AddChild(file);
 
+                var symbols = new HashSet<string>(StringComparer.Ordinal);
                 foreach (Match match in FunctionRegex().Matches(File.ReadAllText(sourcePath)))
                 {
                     var symbol = $"{group.Key}.{match.Groups[1].Value}";
+                    if (!symbols.Add(symbol))
+                    {
+                        continue;
+                    }
+
                     file.AddChild(new HierarchyNode(
                         Id(ReviewLevel.Function, [file.Id, "csharp-source-key-v1", symbol]),
                         match.Groups[1].Value,

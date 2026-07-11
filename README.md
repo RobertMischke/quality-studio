@@ -119,11 +119,17 @@ The default globs cover common programming and web source extensions. Repeat
 `--include` to replace them with a custom set, or select a sibling review kind
 with `--kind security` or `--kind performance`.
 
- ## Repository layout
+## Repository layout
 
 - `src/AgentOrchestrator.CodeQuality/` contains the core quality model library.
 - `tests/AgentOrchestrator.CodeQuality.Tests/` contains its xUnit test suite.
 - `.github/workflows/build.yml` builds and tests the solution for pushes and pull requests to `main`.
+
+## Minimal API
+
+The ASP.NET Core host provides repository tree, file/meta overlay, staleness scan,
+and optional review-trigger endpoints. See [`docs/api.md`](docs/api.md) for
+configuration and live curl examples.
 
 ## License
 
