@@ -22,6 +22,24 @@ public sealed class ReviewPromptBuilderTests
         Assert.Contains("Strict output format", prompt, StringComparison.Ordinal);
         Assert.DoesNotContain("{{", prompt, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Build_UsesExplicitDefaultsForGuidelineInsertionPoints()
+    {
+        var prompt = new ReviewPromptBuilder().Build("Thing.cs", "code");
+
+        Assert.Equal(2, prompt.Split("(none supplied)", StringSplitOptions.None).Length - 1);
+        Assert.Contains("(content not supplied)", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_RejectsUnsupportedKind()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new ReviewPromptBuilder().Build("Thing.cs", "accessibility"));
+
+        Assert.Contains("Unsupported review kind", exception.Message, StringComparison.Ordinal);
+    }
 }
 
 public sealed class ReviewResponseParserTests
@@ -47,6 +65,58 @@ public sealed class ReviewResponseParserTests
         Assert.Contains("location", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Parse_AcceptsFindingWithStrictLocationContract()
+    {
+        var response = ValidResponse.Replace(
+            "\"findings\": []",
+            "\"findings\": [" + ValidFinding + "]",
+            StringComparison.Ordinal);
+
+        var finding = new ReviewResponseParser().Parse(response)["findings"]!.AsArray()[0]!.AsObject();
+
+        Assert.Equal("medium", finding["severity"]!.GetValue<string>());
+        Assert.Equal(3, finding["locations"]!.AsArray()[0]!["range"]!["start"]!["line"]!.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not json")]
+    [InlineData("```json\n{}\n```\n```json\n{}\n```")]
+    public void Parse_RejectsMissingOrAmbiguousJson(string response)
+    {
+        Assert.Throws<ReviewResponseException>(() => new ReviewResponseParser().Parse(response));
+    }
+
+    [Theory]
+    [InlineData("101", "A")]
+    [InlineData("95", "B")]
+    public void Parse_RejectsInvalidGrade(string score, string band)
+    {
+        var response = ValidResponse
+            .Replace("95, \"band\": \"A\"", $"{score}, \"band\": \"{band}\"", StringComparison.Ordinal);
+
+        Assert.Throws<ReviewResponseException>(() => new ReviewResponseParser().Parse(response));
+    }
+
+    [Fact]
+    public void Parse_RejectsUnknownAspectAndSeverity()
+    {
+        var unknownAspect = ValidResponse.Replace(
+            "\"findings\": []",
+            "\"findings\": [" + ValidFinding.Replace("\"correctness\"", "\"security\"", StringComparison.Ordinal) + "]",
+            StringComparison.Ordinal);
+        var invalidSeverity = ValidResponse.Replace(
+            "\"findings\": []",
+            "\"findings\": [" + ValidFinding.Replace("\"medium\"", "\"urgent\"", StringComparison.Ordinal) + "]",
+            StringComparison.Ordinal);
+
+        Assert.Contains("unknown aspect", Assert.Throws<ReviewResponseException>(
+            () => new ReviewResponseParser().Parse(unknownAspect)).Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("severity", Assert.Throws<ReviewResponseException>(
+            () => new ReviewResponseParser().Parse(invalidSeverity)).Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     internal const string ValidResponse = """
         {
           "grade": { "score": 95, "band": "A", "rationale": "Correct and clear." },
@@ -56,6 +126,10 @@ public sealed class ReviewResponseParserTests
           ],
           "findings": []
         }
+        """;
+
+    internal const string ValidFinding = """
+        {"id":"correctness-1","aspect":"correctness","severity":"medium","title":"Risk","description":"A risk.","recommendation":"Fix it.","locations":[{"path":"src/Small.cs","range":{"start":{"line":3,"column":1},"end":{"line":3,"column":4}}}]}
         """;
 }
 
@@ -96,14 +170,119 @@ public sealed class ReviewRunnerTests
         }
     }
 
+    [Fact]
+    public async Task ReviewAsync_PropagatesAgentAndReviewInputsIntoMetadata()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await WithReviewFileAsync(async (root, file) =>
+        {
+            var agent = new FakeAgent(response: ReviewResponseParserTests.ValidResponse.Replace(
+                "\"findings\": []", "\"findings\": [" + ReviewResponseParserTests.ValidFinding + "]", StringComparison.Ordinal));
+
+            var result = await new ReviewRunner(agent).ReviewAsync(new ReviewRequest(
+                "src/Small.cs", "security", GlobalGuidelines: "Global rule.", ProjectGuidelines: "Project rule.", RepositoryRoot: root),
+                cancellationToken);
+
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(result.MetaPath, cancellationToken));
+            var json = document.RootElement;
+            Assert.Equal("security", json.GetProperty("kind").GetString());
+            Assert.Equal("test-agent", json.GetProperty("reviewer").GetProperty("agent").GetString());
+            Assert.Equal("deterministic", json.GetProperty("reviewer").GetProperty("model").GetString());
+            Assert.Equal("run-test", json.GetProperty("reviewer").GetProperty("runId").GetString());
+            Assert.Equal("correctness-1", json.GetProperty("findings")[0].GetProperty("id").GetString());
+            Assert.Contains("Global rule.", agent.Prompt, StringComparison.Ordinal);
+            Assert.Contains("Project rule.", agent.Prompt, StringComparison.Ordinal);
+            Assert.Equal(root, agent.WorkingDirectory);
+        });
+    }
+
+    [Fact]
+    public async Task ReviewAsync_RejectsNonFileLevelBeforeCallingAgent()
+    {
+        var agent = new FakeAgent();
+
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => new ReviewRunner(agent).ReviewAsync(
+            new ReviewRequest("unused", Level: ReviewLevel.Project), TestContext.Current.CancellationToken));
+
+        Assert.Contains("file-level", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(agent.Prompt);
+    }
+
+    [Fact]
+    public async Task ReviewAsync_RejectsTargetOutsideRepository()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "quality-review-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var outside = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".cs");
+            var exception = await Assert.ThrowsAsync<ArgumentException>(() => new ReviewRunner(new FakeAgent()).ReviewAsync(
+                new ReviewRequest(outside, RepositoryRoot: root), TestContext.Current.CancellationToken));
+            Assert.Contains("inside", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task ReviewAsync_DoesNotWriteMetadataWhenTargetChangesDuringReview()
+    {
+        await WithReviewFileAsync(async (root, file) =>
+        {
+            var agent = new FakeAgent(onRun: () => File.AppendAllText(file, "// changed\n"));
+
+            var exception = await Assert.ThrowsAsync<ReviewRunException>(() => new ReviewRunner(agent).ReviewAsync(
+                new ReviewRequest("src/Small.cs", RepositoryRoot: root), TestContext.Current.CancellationToken));
+
+            Assert.Contains("changed", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, "src"), "*.json", SearchOption.AllDirectories));
+        });
+    }
+
+    private static async Task WithReviewFileAsync(Func<string, string, Task> test)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "quality-review-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "src"));
+        var file = Path.Combine(root, "src", "Small.cs");
+        await File.WriteAllTextAsync(file, "internal static class Small { }\n", TestContext.Current.CancellationToken);
+        try
+        {
+            await test(root, file);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
     private sealed class FakeAgent : IReviewAgent
     {
+        private readonly string _response;
+        private readonly Action? _onRun;
+
+        public FakeAgent(string? response = null, Action? onRun = null)
+        {
+            _response = response ?? ReviewResponseParserTests.ValidResponse;
+            _onRun = onRun;
+        }
+
         public string AgentName => "test-agent";
 
         public string? Model => "deterministic";
 
-        public Task<ReviewAgentResult> RunAsync(string prompt, string workingDirectory, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ReviewAgentResult("run-test", $"```json\n{ReviewResponseParserTests.ValidResponse}\n```"));
+        public string? Prompt { get; private set; }
+
+        public string? WorkingDirectory { get; private set; }
+
+        public Task<ReviewAgentResult> RunAsync(string prompt, string workingDirectory, CancellationToken cancellationToken = default)
+        {
+            Prompt = prompt;
+            WorkingDirectory = workingDirectory;
+            _onRun?.Invoke();
+            return Task.FromResult(new ReviewAgentResult("run-test", $"```json\n{_response}\n```"));
+        }
     }
 }
 

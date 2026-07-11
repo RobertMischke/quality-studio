@@ -36,6 +36,11 @@ public sealed class ReviewRunner
     public async Task<ReviewResult> ReviewAsync(ReviewRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.Level != ReviewLevel.File)
+        {
+            throw new ArgumentException("Review runner v1 only supports file-level reviews.", nameof(request));
+        }
+
         var root = Path.GetFullPath(request.RepositoryRoot ?? Directory.GetCurrentDirectory());
         var file = Path.GetFullPath(Path.IsPathRooted(request.FilePath)
             ? request.FilePath
