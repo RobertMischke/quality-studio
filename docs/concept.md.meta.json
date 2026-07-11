@@ -11,6 +11,12 @@
       "title": "QS-5: Levels \u0026 kinds model - hierarchy aggregation (function-\u003Efile-\u003Enamespace-\u003Emodule-\u003Eproject)",
       "linkedAt": "2026-07-11T19:09:51.6475358Z",
       "source": "auto"
+    },
+    {
+      "key": "QS-7",
+      "title": "QS-7: Minimal API host - repo tree \u002B meta overlay \u002B scan/review endpoints",
+      "linkedAt": "2026-07-11T19:36:09.156051Z",
+      "source": "auto"
     }
   ]
 }
