@@ -1,0 +1,18 @@
+{
+  "id": "qs-11-website-quality-seed",
+  "title": "QS-11: Website seed - agent-orchestrator.dev/quality from the ecosystem page",
+  "createdAt": "2026-07-11T16:29:31.454Z",
+  "enteredLaneAt": "2026-07-11T16:29:31.454Z",
+  "state": "2-ready",
+  "order": 11,
+  "agent": "codex",
+  "ownerClientId": "local-default",
+  "model": "gpt-5.6-sol",
+  "thinkingLevel": "high",
+  "cliType": "codex",
+  "kind": "task",
+  "mode": "coding",
+  "allowWebAccess": false,
+  "taskType": "feature",
+  "key": "QS-11"
+}

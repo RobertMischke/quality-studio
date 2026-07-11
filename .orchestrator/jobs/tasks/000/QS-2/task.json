@@ -1,0 +1,18 @@
+{
+  "id": "qs-2-library-scaffold-ci",
+  "title": "QS-2: Core library scaffold - .NET solution, tests, CI (working name coding-agent-quality)",
+  "createdAt": "2026-07-11T16:29:31.454Z",
+  "enteredLaneAt": "2026-07-11T16:29:31.454Z",
+  "state": "2-ready",
+  "order": 2,
+  "agent": "codex",
+  "ownerClientId": "local-default",
+  "model": "gpt-5.6-sol",
+  "thinkingLevel": "high",
+  "cliType": "codex",
+  "kind": "task",
+  "mode": "coding",
+  "allowWebAccess": false,
+  "taskType": "feature",
+  "key": "QS-2"
+}
