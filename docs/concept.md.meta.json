@@ -17,6 +17,12 @@
       "title": "QS-7: Minimal API host - repo tree \u002B meta overlay \u002B scan/review endpoints",
       "linkedAt": "2026-07-11T19:36:09.156051Z",
       "source": "auto"
+    },
+    {
+      "key": "QS-3",
+      "title": "QS-3: Review-meta contract v1 - JSON next to the code, reviewedHash, findings (after QS-1 doc)",
+      "linkedAt": "2026-07-11T20:03:19.8617302Z",
+      "source": "auto"
     }
   ]
 }
