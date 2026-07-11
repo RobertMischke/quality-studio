@@ -1095,7 +1095,7 @@ it does not invent a second mutation path.
 ```json
 {
   "contractVersion": 1,
-  "idempotencyKey": "sha256:806d5bd840b31a979b8e3f2140af95bb93404fbe3790fedf94356db37d6ebae8",
+  "idempotencyKey": "sha256:30ffaf3981e7611e42b285d2721c89da6d89acf213f0024d5fd3f79111fefb17",
   "targetProjectId": "PROJ-016",
   "source": {
     "repositoryId": "agent-orc/quality-studio",
@@ -1165,10 +1165,12 @@ Project/Module/Namespace finding has no source location. In that case `unitId`,
 `unitPath`, the aggregate `reviewedManifestHash`/`currentManifestHash`, meta path,
 full finding, and backlink still make the task actionable. The idempotency key is
 lowercase SHA-256 over UTF-8
-`quality-studio/handover/v1\0<metaPath>\0<reviewedManifestHash>\0<sorted finding IDs joined by comma>`.
-`<reviewedManifestHash>` is the complete prefixed field value. The example key is
-calculated from its displayed source and finding. Retries reuse it; Agent Studio
-or the client rejects a duplicate rather than creating another card.
+`quality-studio/handover/v1\0<targetProjectId>\0<repositoryId>\0<metaPath>\0<reviewedManifestHash>\0<sorted finding IDs joined by comma>`.
+`<reviewedManifestHash>` is the complete prefixed field value. Target and
+repository identity prevent unrelated handovers with matching repo-relative
+paths from colliding. The example key is calculated from its displayed target,
+source, and finding. Retries to the same project reuse it; Agent Studio or the
+client rejects a duplicate rather than creating another card.
 
 Fresh findings hand over directly. A stale review is allowed only after an
 explicit confirmation, and carries reviewed/current manifest hashes plus
@@ -1191,7 +1193,7 @@ hierarchy, hashing, staleness, and sweep-planning core without coupling the
 package to the Quality Studio UI. `AgentOrchestrator.Quality` is too broad, while
 `AgentOrchestrator.QualityStudio` would make a standalone core sound UI-specific.
 
-At 2026-07-11 17:24 UTC, NuGet's exact-ID flat-container endpoint for
+At 2026-07-11 17:55 UTC, NuGet's exact-ID flat-container endpoint for
 [`AgentOrchestrator.CodeQuality`](https://api.nuget.org/v3-flatcontainer/agentorchestrator.codequality/index.json)
 returned HTTP 404, and NuGet autocomplete returned no matching package ID. NuGet
 documents that the
