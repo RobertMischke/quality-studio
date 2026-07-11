@@ -61,7 +61,7 @@ public sealed class HierarchyAggregationTests
             file.Attach(Document("file", ReviewKind.Code, ReviewState.Stale)));
     }
 
-    private static ReviewMetaDocument Document(string id, ReviewKind kind, ReviewState state) =>
+    private static AttachedReviewMetaDocument Document(string id, ReviewKind kind, ReviewState state) =>
         new(id, kind, state, $"{id}.{kind}.json");
 
     private static HierarchyNode Tree()

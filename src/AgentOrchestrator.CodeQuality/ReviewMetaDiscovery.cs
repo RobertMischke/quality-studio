@@ -30,7 +30,7 @@ public static class ReviewMetaDiscovery
                 continue;
             }
 
-            node.Attach(new ReviewMetaDocument(
+            node.Attach(new AttachedReviewMetaDocument(
                 unitId,
                 kind,
                 IsStale(root, document) ? ReviewState.Stale : ReviewState.Current,

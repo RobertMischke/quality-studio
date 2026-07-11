@@ -1,0 +1,81 @@
+{
+  "$schema": "https://agent-orchestrator.dev/quality/schemas/review-meta.v1.schema.json",
+  "schemaVersion": 1,
+  "unit": {
+    "id": "qs-v1/angular/file/7b1bd2568ea481d83c2b97850fafd54c0e1981d94960926ab3b4cc5180daec3e",
+    "adapter": "angular",
+    "level": "file",
+    "path": "src/a.ts",
+    "displayName": "a.ts"
+  },
+  "reviewedAt": "2026-07-11T14:32:09.417Z",
+  "kind": "code",
+  "reviewer": {
+    "agent": "codex",
+    "model": "gpt-5",
+    "agentVersion": "1.0.0"
+  },
+  "reviewedHash": {
+    "algorithm": "sha256",
+    "canonicalization": "quality-studio-subject-manifest-v1",
+    "value": "8ea241557b3e9f1bd4f3c9bf88f5e36684fd86a59829e98e11fabadd5462531f"
+  },
+  "subjectInputs": [
+    {
+      "path": "src/a.ts",
+      "selector": "file",
+      "contentHash": "sha256:95befdd6e691d4d89031a2a2901cc74fc6242109980b060e08ddf87829924483"
+    }
+  ],
+  "reviewInputs": {
+    "effectiveHash": {
+      "algorithm": "sha256",
+      "canonicalization": "quality-studio-review-inputs-v1",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "complete": true,
+    "standards": [],
+    "omitted": [],
+    "prompt": {
+      "id": "file-code-review",
+      "version": "1.0.0",
+      "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "grade": {
+    "score": 92,
+    "band": "A",
+    "rationale": "The example is concise and deterministic."
+  },
+  "summary": "A schema-valid file review metadata example.",
+  "aspects": [
+    {
+      "id": "correctness",
+      "title": "Correctness",
+      "grade": {
+        "score": 92,
+        "band": "A",
+        "rationale": "The declaration is correct."
+      }
+    }
+  ],
+  "findings": [
+    {
+      "id": "prefer-const-name",
+      "aspect": "correctness",
+      "severity": "info",
+      "title": "Name could express intent",
+      "description": "The name is intentionally short for this conformance sample.",
+      "recommendation": "Use a domain name in production code.",
+      "locations": [
+        {
+          "path": "src/a.ts",
+          "range": {
+            "start": { "line": 1, "column": 7 },
+            "end": { "line": 1, "column": 8 }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ namespace AgentOrchestrator.CodeQuality;
 public sealed class HierarchyNode
 {
     private readonly List<HierarchyNode> children = [];
-    private readonly Dictionary<ReviewKind, ReviewMetaDocument> documents = [];
+    private readonly Dictionary<ReviewKind, AttachedReviewMetaDocument> documents = [];
 
     public HierarchyNode(string id, string name, ReviewLevel level, string path)
     {
@@ -30,8 +30,8 @@ public sealed class HierarchyNode
     public IReadOnlyList<HierarchyNode> Children => children;
 
     /// <summary>At most one independently authored document per review kind.</summary>
-    public IReadOnlyDictionary<ReviewKind, ReviewMetaDocument> Documents =>
-        new ReadOnlyDictionary<ReviewKind, ReviewMetaDocument>(documents);
+    public IReadOnlyDictionary<ReviewKind, AttachedReviewMetaDocument> Documents =>
+        new ReadOnlyDictionary<ReviewKind, AttachedReviewMetaDocument>(documents);
 
     /// <summary>Per-kind direct and rolled-up state for this node's current subtree.</summary>
     public IReadOnlyDictionary<ReviewKind, KindAggregation> AggregatedStates =>
@@ -49,7 +49,7 @@ public sealed class HierarchyNode
         return this;
     }
 
-    public HierarchyNode Attach(ReviewMetaDocument document)
+    public HierarchyNode Attach(AttachedReviewMetaDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
         if (!StringComparer.Ordinal.Equals(document.UnitId, Id))

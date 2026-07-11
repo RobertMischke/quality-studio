@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AgentOrchestrator.CodeQuality;
 
@@ -77,4 +78,7 @@ public static class ReviewSubjectHasher
     }
 }
 
-public sealed record SubjectInputHash(string Path, string Selector, string ContentHash);
+public sealed record SubjectInputHash(
+    [property: JsonPropertyOrder(0)] string Path,
+    [property: JsonPropertyOrder(1)] string Selector,
+    [property: JsonPropertyOrder(2)] string ContentHash);

@@ -5,9 +5,9 @@ namespace AgentOrchestrator.CodeQuality;
 /// remains available as <see cref="Payload"/> while aggregation only consumes its kind
 /// and independently calculated staleness.
 /// </summary>
-public sealed record ReviewMetaDocument
+public sealed record AttachedReviewMetaDocument
 {
-    public ReviewMetaDocument(
+    public AttachedReviewMetaDocument(
         string unitId,
         ReviewKind kind,
         ReviewState state,
