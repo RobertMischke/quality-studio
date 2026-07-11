@@ -7,8 +7,10 @@ Agent Studio (the cockpit), Coding Agent Runner (executes), Coding Agent Chat
 (converses), and Token Economy (accounts). Quality Studio is the room you step into when you wear the engineer hat — the one that **reviews**.
 
 > Working state, 2026-07-11: repository founded from the operator-approved concept
-> below. Product URL will be `agent-orchestrator.dev/quality`; the core library direction is `coding-agent-quality`
-> (package id decided at first publish); formal long name: Agent Quality Studio. This README carries the founding concept until `docs/` grows.
+> below. Product URL will be `agent-orchestrator.dev/quality`; the proposed final
+> core package ID and root namespace are `AgentOrchestrator.CodeQuality` (subject
+> to a release-time ownership/availability recheck); formal long name: Agent
+> Quality Studio. The detailed v1 contracts live in [`docs/concept.md`](docs/concept.md).
 
 ## What this is — and what it is not
 
@@ -28,9 +30,10 @@ Project → Module → Namespace → File → Function
 ```
 
 A file review, a module review, and a project review are *different statements*.
-Sweeps run over a whole project per **review kind**: `code`, `architecture`,
-`security` (security is designed as a detachable module — it can grow into its own
-thing).
+Sweeps run over a whole project per **review kind**: `code`, `security`, and
+`performance` (security is designed as a detachable module — it can grow into its
+own thing). Architecture is a project/module code-review aspect in v1, not a
+fourth kind.
 
 ### 2. Review metadata lives next to the code (the heart)
 
@@ -38,7 +41,7 @@ Every reviewed unit gets a small structured JSON meta file **in the same feature
 folder** as the code it describes:
 
 - `reviewedAt` — when the last review ran
-- `kind` — code / architecture / security
+- `kind` — code / security / performance
 - `findings[]` — structured findings
 - `grade` — the level's grade
 - `reviewedHash` — hash of the exact content that was reviewed
@@ -52,7 +55,7 @@ diff**; Code Quality is the **standing truth of the codebase**.
 
 ### 3. Product shape
 
-- **Core as a package** (`AgentOrchestrator.CodeQuality` direction): hierarchy model,
+- **Core as a package** (`AgentOrchestrator.CodeQuality`): hierarchy model,
   meta-file schema, staleness logic, sweep planning — pure and testable.
 - **API**: trigger sweeps, read the quality state, manage review runs.
 - **Frontend**: its own surface in the Studio style, reusing the shared component
@@ -94,8 +97,10 @@ and want to see the quality characteristics of what was built.
 ## Status
 
 - [x] Repository founded, concept anchored (this README)
-- [ ] QS-1: concept elaboration — meta-file schema, naming finalization, embedding
-      path, honest slice plan (runs as a task in this repository)
+- [x] QS-1: concept elaboration — review-meta schema, derivable hierarchy,
+      staleness, package naming, handover contract, augmented-browser requirements,
+      review inputs, website outline, and honest QS-2…QS-13 slice plan
+      ([`docs/concept.md`](docs/concept.md))
 - [ ] Scaffold (package, CI, release rails — Token Economy pattern)
 
 ## License
