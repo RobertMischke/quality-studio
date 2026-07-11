@@ -2,21 +2,22 @@
 
 The interaction budgets are contracts, not aspirations:
 
-| Interaction | Budget | First measurement | Result |
+| Interaction | Budget | QS-9 measurement | Result |
 | --- | ---: | ---: | --- |
-| Tree expand | < 50 ms scripting-to-paint | 0.7 ms | Pass |
-| Tree collapse | < 50 ms scripting-to-paint | 0.9 ms | Pass |
-| File open / first visible content | < 150 ms | 22.4 ms | Pass |
+| Tree expand | < 50 ms scripting-to-paint | 0.8 ms | Pass |
+| Tree collapse | < 50 ms scripting-to-paint | 4.9 ms | Pass |
+| File open / first visible content | < 150 ms | 25.5 ms | Pass |
+| Review aspect switch | < 50 ms scripting-to-paint | 0.6 ms | Pass |
 
-Measured 2026-07-11 in Microsoft Edge 150 (Chromium), headless at 1600 × 1000. The file route returned 333,782 bytes, deliberately above the 200 KB acceptance boundary. The view split the response into lines but inserted only 80 overscanned line rows. Tree expand/collapse inserted only the visible fixed-height window. Network time is included in the file-open mark because it starts at selection and ends on the first animation frame after visible content renders.
+Re-measured for QS-9 on 2026-07-11 in Microsoft Edge 150.0.4078.65 (Chromium), headless at 1600 × 1000. The file route returned 333,782 bytes, deliberately above the 200 KB acceptance boundary, together with two review documents. The view split the response into lines but inserted only 80 overscanned line rows. Tree expand/collapse inserted only the visible fixed-height window. Network time is included in the file-open mark because it starts at selection and ends on the first animation frame after visible content renders. The aspect switch reused the loaded file response; the request counter remained at two (initial file plus opened file) after switching.
 
 ## Repeat the automated measurement
 
 1. Run `npm start` (the harness defaults to `http://127.0.0.1:4200`; set `QS_URL` to use another URL).
 2. Run `npm run perf` in `frontend/`.
-3. The Playwright harness intercepts the file API with a deterministic payload, expands and collapses the tree, opens a file, prints the `PerformanceMeasure` entries, and exits non-zero if either hard budget is exceeded.
+3. The Playwright harness intercepts the file API with a deterministic payload and review metadata, expands and collapses the tree, opens a file, switches aspect, prints the `PerformanceMeasure` entries, and exits non-zero if a hard budget is exceeded or switching causes a file refetch.
 
-The app also logs stable JSON events named `qs.tree.toggle` and `qs.file.first-content`, including `durationMs`, `budgetMs`, `withinBudget`, and the selected path. API fallback and tree load use `qs.data.demo-fallback` and `qs.data.tree-loaded`.
+The app also logs stable JSON events named `qs.tree.toggle`, `qs.file.first-content`, and `qs.review.aspect-switch`, including `durationMs`, `budgetMs`, `withinBudget`, and the selected path. API fallback and tree load use `qs.data.demo-fallback`, `qs.data.file-demo-fallback`, and `qs.data.tree-loaded`.
 
 ## Verify with Chrome tracing
 
@@ -30,5 +31,7 @@ The app also logs stable JSON events named `qs.tree.toggle` and `qs.file.first-c
 
 - The tree is flattened in memory and renders an overscanned 40-row window.
 - The code view renders an overscanned 80-line window regardless of file length.
+- Finding ranges are indexed once per loaded review/aspect; only markers belonging to the visible 80-line window enter the DOM.
+- Aspect switching selects an already-loaded `metaDocuments` entry and does not fetch file content again.
 - The first-content path displays plain escaped text. Syntax coloring can be added only as idle, chunked work or in a worker; whole-file main-thread highlighting is prohibited.
 - Production bundle budgets are enforced at 350 KB warning / 450 KB error initially and 10/12 KB per component stylesheet.

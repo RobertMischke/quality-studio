@@ -5,7 +5,13 @@ import { firstValueFrom } from 'rxjs';
 export type ReviewState = 'fresh' | 'stale' | 'missing';
 export interface KindState { direct: ReviewState; descendants: ReviewState; overall: ReviewState; score: number | null; band: string | null; metaPath: string | null; }
 export interface TreeNode { id: string; name: string; level: string; path: string; kinds: Record<string, KindState>; children: TreeNode[]; }
-export interface FileDocument { path: string; content: string; metaDocuments: unknown[]; }
+export type ReviewKind = 'code' | 'security' | 'performance';
+export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export interface FindingPosition { line: number; column: number; }
+export interface FindingLocation { path: string; range?: { start: FindingPosition; end: FindingPosition }; }
+export interface ReviewFinding { id: string; aspect: string; severity: FindingSeverity; title: string; description: string; recommendation: string; evidence?: string; locations: FindingLocation[]; }
+export interface ReviewMetaDocument { reviewedAt: string; kind: ReviewKind; reviewer: { agent: string; model: string }; grade: { score: number; band: string; rationale: string }; summary: string; findings: ReviewFinding[]; }
+export interface FileDocument { path: string; content: string; metaDocuments: ReviewMetaDocument[]; }
 export interface ScanReport { files: unknown[]; freshCount: number; staleCount: number; missingCount: number; }
 
 const demoFile = `using System.Diagnostics;
@@ -33,7 +39,12 @@ app.MapGet("/api/file", async (string path) =>
 
 app.Run();`;
 
-const kind = (overall: ReviewState): Record<string, KindState> => ({ code: { direct: overall, descendants: overall, overall, score: overall === 'fresh' ? 91 : overall === 'stale' ? 72 : null, band: overall === 'fresh' ? 'A' : overall === 'stale' ? 'C' : null, metaPath: null } });
+const state = (overall: ReviewState, score: number | null, band: string | null): KindState => ({ direct: overall, descendants: overall, overall, score, band, metaPath: score === null ? null : 'preview.review-meta.json' });
+const kind = (code: ReviewState): Record<string, KindState> => ({
+  code: state(code, code === 'fresh' ? 91 : code === 'stale' ? 72 : null, code === 'fresh' ? 'A' : code === 'stale' ? 'C' : null),
+  security: state(code === 'fresh' ? 'fresh' : 'missing', code === 'fresh' ? 86 : null, code === 'fresh' ? 'B' : null),
+  performance: state(code === 'missing' ? 'missing' : 'stale', code === 'missing' ? null : 72, code === 'missing' ? null : 'C'),
+});
 const demoTree: TreeNode[] = [{ id: 'quality-studio', name: 'Quality Studio', level: 'repository', path: '.', kinds: kind('stale'), children: [
   { id: 'src', name: 'src', level: 'folder', path: 'src', kinds: kind('stale'), children: [
     { id: 'api', name: 'QualityStudio.Api', level: 'project', path: 'src/QualityStudio.Api', kinds: kind('fresh'), children: [
@@ -49,6 +60,12 @@ const demoTree: TreeNode[] = [{ id: 'quality-studio', name: 'Quality Studio', le
   { id: 'tests', name: 'tests', level: 'folder', path: 'tests', kinds: kind('missing'), children: [] },
   { id: 'docs', name: 'docs', level: 'folder', path: 'docs', kinds: kind('fresh'), children: [] },
 ]}];
+
+const demoMeta: ReviewMetaDocument[] = [
+  { reviewedAt: '2026-07-11T16:20:00.000Z', kind: 'code', reviewer: { agent: 'quality-reviewer', model: 'gpt-5' }, grade: { score: 91, band: 'A', rationale: 'Clear request boundaries and consistent error handling.' }, summary: 'The API entry point is compact and readable. One low-risk diagnostic gap remains.', findings: [{ id: 'route-timing', aspect: 'observability', severity: 'low', title: 'File route has no timing event', description: 'The user-visible file read is not timed, making slow repository access difficult to diagnose.', recommendation: 'Record a structured duration for the file-read path.', evidence: 'The route awaits File.ReadAllTextAsync and returns without a timing log.', locations: [{ path: 'src/QualityStudio.Api/Program.cs', range: { start: { line: 17, column: 1 }, end: { line: 21, column: 3 } } }] }] },
+  { reviewedAt: '2026-07-09T10:05:00.000Z', kind: 'performance', reviewer: { agent: 'perf-reviewer', model: 'gpt-5' }, grade: { score: 72, band: 'C', rationale: 'Repository hierarchy work is repeated on the request path.' }, summary: 'The endpoint is correct, but the stored review predates the current file and should be rerun.', findings: [{ id: 'rebuild-tree', aspect: 'request-path', severity: 'high', title: 'Hierarchy rebuilt for every request', description: 'A full project hierarchy build runs synchronously whenever the tree endpoint is requested.', recommendation: 'Cache the derived hierarchy and invalidate it from repository scan events.', locations: [{ path: 'src/QualityStudio.Api/Program.cs', range: { start: { line: 10, column: 1 }, end: { line: 15, column: 3 } } }] }] },
+  { reviewedAt: '2026-07-10T13:40:00.000Z', kind: 'security', reviewer: { agent: 'security-reviewer', model: 'gpt-5' }, grade: { score: 86, band: 'B', rationale: 'Repository access is constrained by the API service.' }, summary: 'No exploitable issue was identified in this file.', findings: [] },
+];
 
 @Injectable({ providedIn: 'root' })
 export class QualityApi {
@@ -77,8 +94,9 @@ export class QualityApi {
     try {
       const file = await firstValueFrom(this.http.get<FileDocument>('/api/file', { params: { path } }));
       this.file.set(file); this.connected.set(true);
-    } catch {
-      this.file.set({ path, content: demoFile, metaDocuments: [] });
+    } catch (error) {
+      this.file.set({ path, content: demoFile, metaDocuments: demoMeta });
+      console.warn(JSON.stringify({ event: 'qs.data.file-demo-fallback', path, reason: error instanceof Error ? error.message : 'API unavailable' }));
     } finally { this.loading.set(false); }
   }
 }

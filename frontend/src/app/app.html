@@ -15,7 +15,10 @@
           @for (item of visibleRows(); track item.node.id) {
             <button class="tree-row" [class.selected]="selected() === item.node.path" [style.top.px]="item.top" [style.padding-left.px]="10 + item.node.depth * 16" (click)="item.node.children.length ? toggle(item.node) : open(item.node.path)">
               <span class="chevron" [class.open]="expanded().has(item.node.id)">{{ item.node.children.length ? '›' : '' }}</span>
-              <span class="node-icon">{{ item.node.children.length ? '▰' : '≡' }}</span><span class="node-name">{{ item.node.name }}</span><i class="status" [class]="'status ' + item.node.state"></i>
+              <span class="node-icon">{{ item.node.children.length ? '▰' : '≡' }}</span><span class="node-name">{{ item.node.name }}</span>
+              <span class="tree-states" aria-label="Rolled-up review states">
+                @for (decoration of item.node.decorations; track decoration.kind) { <i class="status" [class]="'status ' + decoration.state" [title]="decoration.label"><span class="sr-only">{{ decoration.label }}</span></i> }
+              </span>
             </button>
           }
         </div>
@@ -26,11 +29,22 @@
     <section class="pane editor-pane">
       <div class="tabs"><div class="tab active"><i class="status" [class]="'status ' + (selectedNode()?.state ?? 'fresh')"></i>{{ api.file()?.path?.split('/')?.at(-1) ?? 'Select a file' }}<span>×</span></div></div>
       <div class="breadcrumbs">quality-studio <b>›</b> {{ api.file()?.path ?? 'No file selected' }}</div>
+      @if (activeMeta(); as meta) {
+        <header class="review-header">
+          <div class="aspect-switcher" role="tablist" aria-label="Review aspect">
+            @for (candidate of availableMeta(); track candidate.kind) {
+              <button role="tab" [attr.aria-selected]="activeKind() === candidate.kind" [class.active]="activeKind() === candidate.kind" (click)="selectKind(candidate.kind)">{{ candidate.kind }} <b>{{ candidate.grade.band }}</b><i class="status" [class]="'status ' + (selectedNode()?.kinds?.[candidate.kind]?.direct ?? 'missing')"></i></button>
+            }
+          </div>
+          <div class="review-provenance"><b>{{ meta.grade.score }} / 100</b><span>Reviewed {{ reviewed(meta) }} by {{ meta.reviewer.agent }} · {{ meta.reviewer.model }}</span></div>
+        </header>
+        @if (activeState() === 'stale') { <div class="stale-banner" role="status"><b>Stale review</b><span>This grade and its findings describe an older version. Keep browsing, but rerun this {{ activeKind() }} review before acting.</span></div> }
+      }
       <div class="code-viewport" (scroll)="codeScrollTop.set($any($event.target).scrollTop)">
         @if (api.loading()) { <div class="loading">Opening file…</div> }
         <div class="code-space" [style.height.px]="codeLines().length * lineHeight">
           @for (line of visibleLines(); track line.number) {
-            <div class="code-line" [style.top.px]="line.top"><span class="line-number">{{ line.number }}</span><code>{{ line.text }}</code></div>
+            <div class="code-line" [class.has-finding]="line.findings.length" [style.top.px]="line.top"><span class="line-number">{{ line.number }}</span>@if (line.findings.length) { <button class="finding-marker" [class]="'finding-marker ' + severity(line.findings)" [title]="findingTitle(line.findings)" [attr.aria-label]="findingTitle(line.findings)" (mouseenter)="selectFinding(line.findings[0])" (focus)="selectFinding(line.findings[0])" (click)="selectFinding(line.findings[0])"></button> }<code>{{ line.text }}</code></div>
           }
         </div>
       </div>
@@ -38,13 +52,14 @@
     </section>
 
     <aside class="pane review-pane">
-      <div class="pane-header"><div><span class="eyebrow">Review</span><strong>Quality signals</strong></div><span class="score">{{ selectedNode()?.kinds?.['code']?.score ?? '—' }}</span></div>
+      <div class="pane-header"><div><span class="eyebrow">Review</span><strong>{{ activeKind() }} findings</strong></div><span class="score" [class.stale-score]="activeState() === 'stale'">{{ activeMeta()?.grade?.band ?? '—' }}</span></div>
       <div class="review-content">
-        <section class="summary-card"><div class="card-top"><span class="status stale"></span><div><b>Attention recommended</b><p>Last reviewed 2 days ago</p></div><span class="band">B</span></div><div class="meter"><span></span></div><div class="meter-label"><span>Quality score</span><b>82 / 100</b></div></section>
-        <div class="section-title"><span>Review lanes</span><small>3</small></div>
-        <article class="lane"><div class="lane-head"><span class="lane-icon blue">&#123; &#125;</span><div><b>Code quality</b><small>Current</small></div><i class="status fresh"></i></div><p>Clean structure and consistent error handling. No blocking findings.</p><div class="tags"><span>2 notes</span><span>91 · A</span></div></article>
-        <article class="lane"><div class="lane-head"><span class="lane-icon amber">◇</span><div><b>Performance</b><small>Review needed</small></div><i class="status stale"></i></div><p>One endpoint rebuilds the hierarchy for each request. Consider caching.</p><div class="tags"><span>1 finding</span><span>72 · C</span></div></article>
-        <article class="lane muted"><div class="lane-head"><span class="lane-icon grey">⌾</span><div><b>Security</b><small>Not reviewed</small></div><i class="status missing"></i></div><button class="review-button">Run security review <span>→</span></button></article>
+        @if (activeMeta(); as meta) {
+          <section class="summary-card"><div class="card-top"><span class="status" [class]="'status ' + activeState()"></span><div><b>{{ meta.grade.rationale }}</b><p>{{ meta.summary }}</p></div><span class="band">{{ meta.grade.band }}</span></div><div class="meter"><span [style.width.%]="meta.grade.score"></span></div><div class="meter-label"><span>Historical quality score</span><b>{{ meta.grade.score }} / 100</b></div></section>
+          <div class="section-title"><span>Findings</span><small>{{ meta.findings.length }}</small></div>
+          @for (finding of meta.findings; track finding.id) { <button class="finding-card" [class.selected]="selectedFinding()?.id === finding.id" (click)="selectFinding(finding)"><span class="severity" [class]="'severity ' + finding.severity">{{ finding.severity }}</span><b>{{ finding.title }}</b><p>{{ finding.description }}</p></button> } @empty { <div class="empty-findings">No findings in this review.</div> }
+          @if (selectedFinding(); as finding) { <section class="finding-detail" aria-live="polite"><span class="eyebrow">Selected finding</span><h3>{{ finding.title }}</h3><p>{{ finding.description }}</p>@if (finding.evidence) { <b>Evidence</b><p>{{ finding.evidence }}</p> }<b>Recommendation</b><p>{{ finding.recommendation }}</p></section> }
+        } @else { <div class="empty-findings">This file has no review metadata.</div> }
         <div class="section-title"><span>Repository scan</span><small>Now</small></div>
         <div class="scan-grid"><div><i class="status fresh"></i><b>{{ api.scan().freshCount }}</b><span>Fresh</span></div><div><i class="status stale"></i><b>{{ api.scan().staleCount }}</b><span>Stale</span></div><div><i class="status missing"></i><b>{{ api.scan().missingCount }}</b><span>Missing</span></div></div>
       </div>
