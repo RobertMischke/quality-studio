@@ -1,0 +1,10 @@
+{
+  "relatedTasks": [
+    {
+      "key": "QS-4",
+      "title": "QS-4: Staleness engine \u002B scan command (fresh/stale/missing per file)",
+      "linkedAt": "2026-07-11T19:07:31.0187845Z",
+      "source": "auto"
+    }
+  ]
+}
