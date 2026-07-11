@@ -7,3 +7,11 @@ FOUNDING TASK of coding-agent-code-quality (READ README.md first - it carries th
 5. PACKAGE NAMING finalization proposal: AgentOrchestrator.CodeQuality direction (check nuget availability, propose final id + repo docs update).
 6. HONEST SLICE PLAN: CQ-2..n (scaffold with TE-style release rails, schema lib + tests, first file-level code-review sweep runner, module aggregation, Studio embedding v1) with sizes.
 Deliverable: docs/concept.md (English) + updated README status; NO production code beyond doc examples. Second-opinion pass before finishing.
+
+## Addendum (operator dictation #2, 2026-07-11 - now part of the mandate):
+7. UI CHARACTER: augmented code browsing is the product core (see README section) - concept must define the browser/tree/editor experience: meta layer on every node, aspect-split file reviews rendered at the code, staleness inline.
+8. PERFORMANCE GOALS as first-class requirements: editor view robust + extremely fast; tree keyboard-driven, context menu, instant file loads, follows Git state. Name the technical approach (virtualization, incremental loading).
+9. INPUT MANAGEMENT: global + per-project standards as review inputs - schema and precedence.
+10. REVIEW KINDS now explicitly: code, security (detachable), PERFORMANCE.
+11. RESEARCH BOX: code graph as graphical meta layer - scope a small research spike, do not decide.
+12. WEBSITE SEED: the operator artifact (ecosystem page) seeds agent-orchestrator.dev/quality - concept should include the website outline.

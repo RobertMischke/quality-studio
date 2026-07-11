@@ -69,6 +69,27 @@ diff**; Code Quality is the **standing truth of the codebase**.
 - Style-guide layer supplies the per-technology rules that reviews check against.
 - Retro-grading and the remote review pipeline of Agent Studio are execution paths.
 
+## The core interaction: augmented code browsing
+
+The role reversal that clarifies everything: in Agent Orchestrator you work at
+feature level - code is an artifact rushing past. Here you come **as an engineer**
+and want to see the quality characteristics of what was built.
+
+- **The code browser is the center.** Folder structure and feature folders up front;
+  enter anywhere (project -> subproject -> folder -> file). On top of everything sits
+  the meta layer: grades per kind (code, security, **performance**), staleness at a glance.
+- **File level reviews are split into aspects** - never a blanket good/bad, but named
+  finding strands, augmented directly in the editor view.
+- **Input management:** review standards defined globally, overridable per project
+  (style guides, rules, thresholds).
+- **Hard performance goals:** a rock-solid, extremely fast editor view (file-level
+  augmentation at the code, not beside it) and a tree that is keyboard-driven, has a
+  context menu, loads files instantly, and follows the Git state.
+- **Research box (open on purpose):** whether a code graph joins as a graphical meta
+  layer is a research topic, not a pre-decision.
+- The package stays usable standalone (iterate code over code: write meta JSONs,
+  drive the CLI runner); agent integration runs through Coding Agent Runner.
+
 ## Status
 
 - [x] Repository founded, concept anchored (this README)
