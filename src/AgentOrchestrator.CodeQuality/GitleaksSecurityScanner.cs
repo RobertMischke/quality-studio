@@ -44,6 +44,7 @@ public class GitleaksSecurityScanner
         }
         catch (Exception exception) when (exception is SecurityScannerUnavailableException or IOException or InvalidOperationException or Win32Exception or JsonException)
         {
+            var unavailableReason = GetUnavailableReason(exception);
             var unavailable = new SecurityScanReport(
                 SecurityVerdict.Unavailable,
                 Available: false,
@@ -60,9 +61,9 @@ public class GitleaksSecurityScanner
                 BlockFindings: 0,
                 WarnFindings: 0,
                 CleanFiles: 0,
-                UnavailableReason: exception.Message,
+                UnavailableReason: unavailableReason,
                 Findings: Array.Empty<SecurityFindingRecord>());
-            QualityStudioEventSource.Log.SecurityScanUnavailable(root, request.Mode.ToString().ToLowerInvariant(), exception.GetType().Name, exception.Message);
+            QualityStudioEventSource.Log.SecurityScanUnavailable(root, request.Mode.ToString().ToLowerInvariant(), exception.GetType().Name, unavailableReason);
             return new SecurityScanResult(
                 unavailable,
                 new SecurityScanProvenance("gitleaks", GitleaksBinaryResolver.PinnedVersion,
@@ -84,7 +85,7 @@ public class GitleaksSecurityScanner
                 .ConfigureAwait(false);
         }
 
-        var report = BuildReport(request, configPath, baselinePath, grouped, findings, stopwatch.Elapsed);
+        var report = BuildReport(request, configPath, baselinePath, output.FilesScanned, grouped, findings);
         var provenance = new SecurityScanProvenance(
             "gitleaks",
             output.Version,
@@ -116,9 +117,9 @@ public class GitleaksSecurityScanner
         SecurityScanRequest request,
         string? configPath,
         string? baselinePath,
+        int filesScanned,
         IReadOnlyCollection<IGrouping<string, SecurityFindingRecord>> grouped,
-        IReadOnlyList<SecurityFindingRecord> findings,
-        TimeSpan elapsed)
+        IReadOnlyList<SecurityFindingRecord> findings)
     {
         var newFindings = findings.Count(finding => !finding.Accepted);
         var acceptedFindings = findings.Count - newFindings;
@@ -129,8 +130,7 @@ public class GitleaksSecurityScanner
             : newFindings > 0
                 ? SecurityVerdict.Warn
                 : SecurityVerdict.Pass;
-        var filesScanned = grouped.Count;
-        var cleanFiles = 0;
+        var cleanFiles = Math.Max(0, filesScanned - grouped.Count);
         return new SecurityScanReport(
             verdict,
             Available: true,
@@ -162,34 +162,7 @@ public class GitleaksSecurityScanner
 
         var fingerprints = new HashSet<string>(StringComparer.Ordinal);
         var json = await File.ReadAllTextAsync(baselinePath, cancellationToken).ConfigureAwait(false);
-        var node = JsonNode.Parse(json);
-        if (node is JsonArray array)
-        {
-            foreach (var entry in array)
-            {
-                var finding = entry?.AsObject();
-                if (finding is null)
-                {
-                    continue;
-                }
-
-                var fingerprint = finding["Fingerprint"]?.GetValue<string>() ?? finding["fingerprint"]?.GetValue<string>();
-                if (!string.IsNullOrWhiteSpace(fingerprint))
-                {
-                    fingerprints.Add(fingerprint);
-                }
-                else
-                {
-                    fingerprints.Add(ComputeFingerprint(
-                        NormalizeRelativePath(finding["File"]?.GetValue<string>() ?? string.Empty),
-                        finding["RuleID"]?.GetValue<string>() ?? finding["ruleId"]?.GetValue<string>() ?? "gitleaks",
-                        finding["StartLine"]?.GetValue<int>() ?? finding["startLine"]?.GetValue<int>() ?? 1,
-                        finding["StartColumn"]?.GetValue<int>() ?? finding["startColumn"]?.GetValue<int>() ?? 1,
-                        finding["EndLine"]?.GetValue<int>() ?? finding["endLine"]?.GetValue<int>() ?? 1,
-                        finding["EndColumn"]?.GetValue<int>() ?? finding["endColumn"]?.GetValue<int>() ?? 1));
-                }
-            }
-        }
+        CollectBaselineFingerprints(JsonNode.Parse(json), fingerprints);
 
         return fingerprints;
     }
@@ -304,6 +277,14 @@ public class GitleaksSecurityScanner
         string? baselinePath,
         CancellationToken cancellationToken)
     {
+        var scannedFiles = request.Mode switch
+        {
+            SecurityScanMode.Repository => await CountRepositoryFilesAsync(root, cancellationToken).ConfigureAwait(false),
+            SecurityScanMode.Range => await CountRangeFilesAsync(root, request.Range!, cancellationToken).ConfigureAwait(false),
+            SecurityScanMode.Staged => 0,
+            _ => throw new ArgumentOutOfRangeException(nameof(request.Mode), request.Mode, null),
+        };
+
         var process = new Process
         {
             StartInfo = new ProcessStartInfo(gitleaksPath)
@@ -366,14 +347,14 @@ public class GitleaksSecurityScanner
         }
 
         var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+        await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
         await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
         if (process.ExitCode is not (0 or 1))
         {
-            throw new SecurityScannerUnavailableException($"Gitleaks exited with code {process.ExitCode}: {stderr.Trim()}");
+            throw new SecurityScannerUnavailableException($"Gitleaks exited with code {process.ExitCode}.");
         }
 
-        return ParseOutput(stdout);
+        return ParseOutput(stdout) with { FilesScanned = scannedFiles };
     }
 
     private async Task<SecurityScanOutput> ScanStagedAsync(
@@ -388,6 +369,8 @@ public class GitleaksSecurityScanner
         try
         {
             var stagedFiles = await ListStagedFilesAsync(root, cancellationToken).ConfigureAwait(false);
+            var deletedFiles = await ListDeletedStagedFilesAsync(root, cancellationToken).ConfigureAwait(false);
+            var scannedPaths = new HashSet<string>(stagedFiles, StringComparer.OrdinalIgnoreCase);
             foreach (var relativePath in stagedFiles)
             {
                 var content = await ReadIndexFileAsync(root, relativePath, cancellationToken).ConfigureAwait(false);
@@ -396,9 +379,23 @@ public class GitleaksSecurityScanner
                 await File.WriteAllTextAsync(destination, content, cancellationToken).ConfigureAwait(false);
             }
 
+            foreach (var relativePath in deletedFiles)
+            {
+                if (!scannedPaths.Add(relativePath))
+                {
+                    continue;
+                }
+
+                var content = await ReadDeletedFileAsync(root, relativePath, cancellationToken).ConfigureAwait(false);
+                var destination = Path.Combine(tempRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                await File.WriteAllTextAsync(destination, content, cancellationToken).ConfigureAwait(false);
+            }
+
             var stagedRequest = new SecurityScanRequest(tempRoot, SecurityScanMode.Repository, null, configPath, baselinePath, false);
-            return await RunScanAsync(tempRoot, stagedRequest, gitleaksPath, configPath, baselinePath, cancellationToken)
+            var output = await RunScanAsync(tempRoot, stagedRequest, gitleaksPath, configPath, baselinePath, cancellationToken)
                 .ConfigureAwait(false);
+            return output with { FilesScanned = scannedPaths.Count };
         }
         finally
         {
@@ -415,10 +412,39 @@ public class GitleaksSecurityScanner
             .ToArray();
     }
 
+    private static async Task<IReadOnlyList<string>> ListDeletedStagedFilesAsync(string root, CancellationToken cancellationToken)
+    {
+        var files = await RunGitAsync(root, cancellationToken, "diff", "--cached", "--name-only", "--diff-filter=D", "-z")
+            .ConfigureAwait(false);
+        return files.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormalizeRelativePath)
+            .ToArray();
+    }
+
     private static async Task<string> ReadIndexFileAsync(string root, string relativePath, CancellationToken cancellationToken)
     {
         return await RunGitAsync(root, cancellationToken, "show", $":{relativePath}")
             .ConfigureAwait(false);
+    }
+
+    private static async Task<string> ReadDeletedFileAsync(string root, string relativePath, CancellationToken cancellationToken)
+    {
+        return await RunGitAsync(root, cancellationToken, "show", $"HEAD:{relativePath}")
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<int> CountRepositoryFilesAsync(string root, CancellationToken cancellationToken)
+    {
+        var files = await RunGitAsync(root, cancellationToken, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+            .ConfigureAwait(false);
+        return files.Split('\0', StringSplitOptions.RemoveEmptyEntries).Length;
+    }
+
+    private static async Task<int> CountRangeFilesAsync(string root, string range, CancellationToken cancellationToken)
+    {
+        var files = await RunGitAsync(root, cancellationToken, "diff", "--name-only", "--diff-filter=ACMRD", "-z", range)
+            .ConfigureAwait(false);
+        return files.Split('\0', StringSplitOptions.RemoveEmptyEntries).Length;
     }
 
     private static async Task<string> RunGitAsync(string root, CancellationToken cancellationToken, params string[] arguments)
@@ -452,11 +478,11 @@ public class GitleaksSecurityScanner
         }
 
         var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+        await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
         await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
         if (process.ExitCode != 0)
         {
-            throw new SecurityScannerUnavailableException($"Git command failed: {stderr.Trim()}");
+            throw new SecurityScannerUnavailableException($"Git command failed with exit code {process.ExitCode}.");
         }
 
         return stdout;
@@ -466,7 +492,7 @@ public class GitleaksSecurityScanner
     {
         if (string.IsNullOrWhiteSpace(output))
         {
-            return new SecurityScanOutput(Array.Empty<SecurityFindingRecord>(), GitleaksBinaryResolver.PinnedVersion);
+            return new SecurityScanOutput(Array.Empty<SecurityFindingRecord>(), GitleaksBinaryResolver.PinnedVersion, 0);
         }
 
         var trimmed = output.TrimStart();
@@ -498,7 +524,7 @@ public class GitleaksSecurityScanner
             findings.Add(ParseJsonFinding(finding));
         }
 
-        return new SecurityScanOutput(findings, ExtractVersion(findings));
+        return new SecurityScanOutput(findings, ExtractVersion(findings), 0);
     }
 
     private static SecurityFindingRecord ParseJsonFinding(JsonObject finding)
@@ -509,16 +535,22 @@ public class GitleaksSecurityScanner
         var endLine = finding["EndLine"]?.GetValue<int>() ?? startLine;
         var startColumn = finding["StartColumn"]?.GetValue<int>() ?? 1;
         var endColumn = finding["EndColumn"]?.GetValue<int>() ?? startColumn;
+        var severity = ParseSeverity(
+            finding["Severity"]?.GetValue<string>() ??
+            finding["RuleSeverity"]?.GetValue<string>() ??
+            finding["severity"]?.GetValue<string>() ??
+            finding["ruleSeverity"]?.GetValue<string>(),
+            FindingSeverity.High);
         return BuildFinding(
             path,
             ruleId,
+            severity,
             finding["Description"]?.GetValue<string>(),
             startLine,
             endLine,
             startColumn,
             endColumn,
-            finding["Fingerprint"]?.GetValue<string>(),
-            finding["Match"]?.GetValue<string>());
+            finding["Fingerprint"]?.GetValue<string>());
     }
 
     private static SecurityScanOutput ParseSarifReport(string json)
@@ -581,32 +613,33 @@ public class GitleaksSecurityScanner
                 var artifact = physical?["artifactLocation"]?.AsObject();
                 var region = physical?["region"]?.AsObject();
                 var path = NormalizeRelativePath(artifact?["uri"]?.GetValue<string>() ?? string.Empty);
+                var severity = ParseSeverity(result["level"]?.GetValue<string>(), FindingSeverity.High);
                 findings.Add(BuildFinding(
                     path,
                     ruleId,
+                    severity,
                     rules.TryGetValue(ruleId, out var description) ? description : result["message"]?["text"]?.GetValue<string>(),
                     region?["startLine"]?.GetValue<int>() ?? 1,
                     region?["endLine"]?.GetValue<int>() ?? region?["startLine"]?.GetValue<int>() ?? 1,
                     region?["startColumn"]?.GetValue<int>() ?? 1,
                     region?["endColumn"]?.GetValue<int>() ?? region?["startColumn"]?.GetValue<int>() ?? 1,
-                    result["partialFingerprints"]?["fingerprint"]?.GetValue<string>(),
-                    result["message"]?["text"]?.GetValue<string>()));
+                    ExtractFingerprint(result["partialFingerprints"]?.AsObject())));
             }
         }
 
-        return new SecurityScanOutput(findings, ExtractVersion(findings));
+        return new SecurityScanOutput(findings, ExtractVersion(findings), 0);
     }
 
     private static SecurityFindingRecord BuildFinding(
         string path,
         string ruleId,
+        FindingSeverity severity,
         string? description,
         int startLine,
         int endLine,
         int startColumn,
         int endColumn,
-        string? fingerprint,
-        string? evidence)
+        string? fingerprint)
     {
         var normalizedPath = NormalizeRelativePath(path);
         var id = $"gitleaks-{Sha256($"{ruleId}\0{normalizedPath}\0{startLine}\0{startColumn}\0{endLine}\0{endColumn}")[..16]}";
@@ -617,14 +650,14 @@ public class GitleaksSecurityScanner
         return new SecurityFindingRecord(
             id,
             "secrets",
-            FindingSeverity.High,
+            severity,
             description?.Length > 0 ? description : $"Gitleaks rule {ruleId} detected a potential secret.",
             $"Gitleaks detected a potential secret in {normalizedPath} at lines {startLine}-{endLine}.",
             "Remove the secret, rotate any exposed credential, and keep only a narrowly audited placeholder or baseline entry if this match is intentional.",
             [location],
             !string.IsNullOrWhiteSpace(fingerprint) ? fingerprint : computedFingerprint,
             ruleId,
-            evidence is { Length: > 0 } ? $"Gitleaks matched rule {ruleId}." : null,
+            null,
             normalizedPath,
             Accepted: false);
     }
@@ -653,6 +686,107 @@ public class GitleaksSecurityScanner
     private static string ComputeFingerprint(string path, string ruleId, int startLine, int startColumn, int endLine, int endColumn) =>
         $"sha256:{Sha256($"gitleaks-finding-v1\0{ruleId}\0{path}\0{startLine}\0{startColumn}\0{endLine}\0{endColumn}")}";
 
+    private static FindingSeverity ParseSeverity(string? value, FindingSeverity fallback) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            "critical" or "error" => FindingSeverity.Critical,
+            "high" => FindingSeverity.High,
+            "medium" or "warning" or "warn" => FindingSeverity.Medium,
+            "low" => FindingSeverity.Low,
+            "info" or "note" => FindingSeverity.Info,
+            _ => fallback,
+        };
+
+    private static string? ExtractFingerprint(JsonObject? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+
+        var fingerprint = node["fingerprint"]?.GetValue<string>() ?? node["Fingerprint"]?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(fingerprint))
+        {
+            return fingerprint;
+        }
+
+        return null;
+    }
+
+    private static void CollectBaselineFingerprints(JsonNode? node, HashSet<string> fingerprints)
+    {
+        if (node is null)
+        {
+            return;
+        }
+
+        switch (node)
+        {
+            case JsonArray array:
+                foreach (var entry in array)
+                {
+                    CollectBaselineFingerprints(entry, fingerprints);
+                }
+                break;
+            case JsonObject obj:
+                AddBaselineFingerprint(obj, fingerprints);
+                foreach (var property in obj)
+                {
+                    CollectBaselineFingerprints(property.Value, fingerprints);
+                }
+                break;
+        }
+    }
+
+    private static void AddBaselineFingerprint(JsonObject finding, HashSet<string> fingerprints)
+    {
+        var fingerprint = finding["Fingerprint"]?.GetValue<string>() ?? finding["fingerprint"]?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(fingerprint))
+        {
+            fingerprints.Add(fingerprint);
+            return;
+        }
+
+        var path = NormalizeRelativePath(
+            finding["File"]?.GetValue<string>() ??
+            finding["file"]?.GetValue<string>() ??
+            finding["path"]?.GetValue<string>() ??
+            finding["uri"]?.GetValue<string>() ??
+            string.Empty);
+        var hasFindingShape =
+            !string.IsNullOrWhiteSpace(path) &&
+            (
+                finding["RuleID"] is not null ||
+                finding["RuleId"] is not null ||
+                finding["ruleId"] is not null ||
+                finding["StartLine"] is not null ||
+                finding["startLine"] is not null ||
+                finding["StartColumn"] is not null ||
+                finding["startColumn"] is not null ||
+                finding["EndLine"] is not null ||
+                finding["endLine"] is not null ||
+                finding["EndColumn"] is not null ||
+                finding["endColumn"] is not null);
+        if (!hasFindingShape)
+        {
+            return;
+        }
+
+        var ruleId = finding["RuleID"]?.GetValue<string>() ?? finding["RuleId"]?.GetValue<string>() ?? finding["ruleId"]?.GetValue<string>() ?? "gitleaks";
+        var startLine = finding["StartLine"]?.GetValue<int>() ?? finding["startLine"]?.GetValue<int>() ?? 1;
+        var endLine = finding["EndLine"]?.GetValue<int>() ?? finding["endLine"]?.GetValue<int>() ?? startLine;
+        var startColumn = finding["StartColumn"]?.GetValue<int>() ?? finding["startColumn"]?.GetValue<int>() ?? 1;
+        var endColumn = finding["EndColumn"]?.GetValue<int>() ?? finding["endColumn"]?.GetValue<int>() ?? startColumn;
+        fingerprints.Add(ComputeFingerprint(path, ruleId, startLine, startColumn, endLine, endColumn));
+    }
+
+    private static string GetUnavailableReason(Exception exception) => exception switch
+    {
+        JsonException => "Gitleaks produced an invalid report.",
+        SecurityScannerUnavailableException unavailable => unavailable.Message,
+        _ => exception.Message,
+    };
+
     private static void DeletePath(string path)
     {
         try
@@ -671,5 +805,5 @@ public class GitleaksSecurityScanner
         }
     }
 
-    private sealed record SecurityScanOutput(IReadOnlyList<SecurityFindingRecord> Findings, string Version);
+    private sealed record SecurityScanOutput(IReadOnlyList<SecurityFindingRecord> Findings, string Version, int FilesScanned);
 }

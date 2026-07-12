@@ -117,7 +117,12 @@ internal static class QualityCli
                     (finding.Accepted ? " accepted" : string.Empty));
             }
 
-            return result.Report.Verdict is SecurityVerdict.Block or SecurityVerdict.Warn ? 1 : 0;
+            return result.Report.Verdict switch
+            {
+                SecurityVerdict.Unavailable => 2,
+                SecurityVerdict.Block or SecurityVerdict.Warn => 1,
+                _ => 0,
+            };
         }
         catch (Exception exception) when (exception is ArgumentException or DirectoryNotFoundException or SecurityScannerUnavailableException)
         {

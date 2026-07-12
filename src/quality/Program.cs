@@ -87,7 +87,12 @@ internal static class QualityCommand
                 output.WriteLine($"{finding.Severity.ToString().ToLowerInvariant(),-8} {finding.Path} {finding.RuleId} {finding.Locations[0].Range!.Start.Line}-{finding.Locations[0].Range!.End.Line}" + (finding.Accepted ? " accepted" : string.Empty));
             }
 
-            return result.Report.Verdict is SecurityVerdict.Block or SecurityVerdict.Warn ? 1 : 0;
+            return result.Report.Verdict switch
+            {
+                SecurityVerdict.Unavailable => 2,
+                SecurityVerdict.Block or SecurityVerdict.Warn => 1,
+                _ => 0,
+            };
         }
         catch (Exception exception) when (exception is ArgumentException or DirectoryNotFoundException or SecurityScannerUnavailableException)
         {
