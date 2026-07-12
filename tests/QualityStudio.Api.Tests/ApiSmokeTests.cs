@@ -98,6 +98,18 @@ public sealed class ApiSmokeTests : IAsyncLifetime
         Assert.False(finding.TryGetProperty("secret", out _));
     }
 
+    [Fact]
+    public async Task Health_returns_ok_for_the_dev_launcher()
+    {
+        using var client = application!.CreateClient();
+        using var response = await client.GetAsync("/health", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("ok", json.GetProperty("status").GetString());
+        Assert.Equal("QualityStudio.Api", json.GetProperty("service").GetString());
+    }
+
     public async ValueTask InitializeAsync()
     {
         Directory.CreateDirectory(repositoryRoot);

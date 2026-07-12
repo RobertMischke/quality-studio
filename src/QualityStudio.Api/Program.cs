@@ -53,6 +53,8 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
 app.UseStatusCodePages();
 app.UseCors("dev-frontend");
 
+app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "QualityStudio.Api" }));
+
 app.MapGet("/api/tree", (string? path, RepositoryAccess repository, ILogger<Program> logger) =>
 {
     var stopwatch = Stopwatch.StartNew();

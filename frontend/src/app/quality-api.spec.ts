@@ -83,6 +83,8 @@ describe('QualityApi', () => {
     await loading;
 
     expect(api.connected()).toBeTrue();
+    expect(api.connectionState()).toBe('live');
+    expect(api.connectionLabel()).toBe('Repository connected');
     expect(api.inputs().code).toEqual(input);
     expect(api.inputs().code?.inputs[0].id).toBe('code-style');
   });

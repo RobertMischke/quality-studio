@@ -149,6 +149,26 @@ The ASP.NET Core host provides repository tree, file/meta overlay, staleness sca
 and optional review-trigger endpoints. See [`docs/api.md`](docs/api.md) for
 configuration and live curl examples.
 
+## One-click dev stack
+
+Project Hub should start Quality Studio through the repository-owned launcher, not
+as two separate services:
+
+```powershell
+npm run dev
+```
+
+The root command boots the API and frontend together, bootstraps the frontend
+dependencies on a clean checkout, waits for `GET /health` and the Angular shell,
+and prefixes the child logs so API and web output stay readable. The default
+ports are API `5127` and product `4200`, and both can be overridden with
+`--api-port` / `--web-port` or `QUALITY_STUDIO_API_PORT` /
+`QUALITY_STUDIO_PRODUCT_PORT` when the launcher is invoked from another host.
+
+The shell distinguishes `Repository connected`, `API offline · preview data`,
+and `API offline` states so embedded review flows do not pretend the API is live
+when it is not.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).

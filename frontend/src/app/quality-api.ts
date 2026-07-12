@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 
 export type ReviewState = 'fresh' | 'stale' | 'missing';
@@ -43,6 +43,7 @@ export interface HandoverResult { dryRun: boolean; taskId: string | null; card: 
 export interface ResolvedInput { id: string; source: string; scope: 'global' | 'project'; priority: number; includedContent: string; content: string; truncated: boolean; }
 export interface InputOmission { id: string; source: string; reason: string; omittedCharacters: number; }
 export interface ResolvedInputs { kind: ReviewKind; level: string; budgetCharacters: number; includedCharacters: number; complete: boolean; inputs: ResolvedInput[]; omissions: InputOmission[]; }
+export type ApiConnectionState = 'connecting' | 'live' | 'preview' | 'offline';
 
 const demoFile = `using System.Diagnostics;
 using AgentOrchestrator.CodeQuality;
@@ -126,7 +127,18 @@ export class QualityApi {
   readonly file = signal<FileDocument | null>(null);
   readonly scan = signal<ScanReport>({ files: [], freshCount: 8, staleCount: 4, missingCount: 3 });
   readonly security = signal<SecurityScanResponse | null>(null);
-  readonly connected = signal(false);
+  readonly connectionState = signal<ApiConnectionState>('connecting');
+  readonly connected = computed(() => this.connectionState() === 'live');
+  readonly connectionLabel = computed(() => {
+    const state = this.connectionState();
+    return state === 'live'
+      ? 'Repository connected'
+      : state === 'preview'
+        ? 'API offline, preview data'
+        : state === 'offline'
+          ? 'API offline'
+          : 'Connecting to API';
+  });
   readonly loading = signal(false);
   readonly handoverConfigured = signal(false);
   readonly handoverDryRun = signal(true);
@@ -140,10 +152,11 @@ export class QualityApi {
         firstValueFrom(this.http.get<SecurityScanResponse>('/api/security/scan')),
         firstValueFrom(this.http.get<{ kinds: Record<ReviewKind, ResolvedInputs> }>('/api/inputs')),
       ]);
-      this.tree.set(tree.nodes); this.scan.set(scan); this.security.set(security); this.inputs.set(inputs.kinds); this.connected.set(true);
+      this.tree.set(tree.nodes); this.scan.set(scan); this.security.set(security); this.inputs.set(inputs.kinds); this.connectionState.set('live');
       console.info(JSON.stringify({ event: 'qs.data.tree-loaded', nodeCount: tree.nodes.length, source: 'api' }));
     } catch (error) {
       this.security.set(demoSecurity);
+      this.connectionState.set('preview');
       console.warn(JSON.stringify({ event: 'qs.data.demo-fallback', reason: error instanceof Error ? error.message : 'API unavailable' }));
     }
     await this.loadHandoverConfiguration();
@@ -153,9 +166,10 @@ export class QualityApi {
     this.loading.set(true);
     try {
       const file = await firstValueFrom(this.http.get<FileDocument>('/api/file', { params: { path } }));
-      this.file.set(file); this.connected.set(true);
+      this.file.set(file); this.connectionState.set('live');
     } catch (error) {
       this.file.set({ path, content: demoFile, metaDocuments: demoMeta });
+      this.connectionState.update(current => current === 'live' ? 'offline' : 'preview');
       console.warn(JSON.stringify({ event: 'qs.data.file-demo-fallback', path, reason: error instanceof Error ? error.message : 'API unavailable' }));
     } finally { this.loading.set(false); }
   }
@@ -174,3 +188,5 @@ export class QualityApi {
     }
   }
 }
+
+

@@ -1,7 +1,11 @@
 <div class="shell">
   <header class="topbar">
     <div class="brand"><span class="brand-mark">Q</span><span>Quality Studio</span><span class="branch">main</span></div>
-    <div class="health"><span class="status fresh"></span>{{ api.connected() ? 'Repository connected' : 'Preview data' }}</div>
+    <div class="health" [attr.data-connection-state]="api.connectionState()">
+      <span class="status" [class.fresh]="api.connectionState() === 'live'" [class.stale]="api.connectionState() === 'preview'" [class.missing]="api.connectionState() !== 'live' && api.connectionState() !== 'preview'"></span>
+      <span>{{ api.connectionLabel() }}</span>
+      @if (embedded()) { <span class="embedded-badge">Embedded</span> }
+    </div>
     <button class="icon-button" (click)="setTheme()" [attr.aria-label]="'Switch to ' + (theme() === 'dark' ? 'light' : 'dark') + ' theme'">{{ theme() === 'dark' ? '☼' : '◐' }}</button>
   </header>
 

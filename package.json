@@ -1,0 +1,9 @@
+{
+  "name": "quality-studio",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-stack.mjs",
+    "test:dev-stack": "node --test tests/dev-stack.test.mjs"
+  }
+}

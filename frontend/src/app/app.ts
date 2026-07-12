@@ -13,6 +13,7 @@ type FlatNode = TreeNode & { depth: number; state: ReviewState; decorations: { k
 })
 export class App {
   readonly api = inject(QualityApi);
+  readonly embedded = signal(this.detectEmbedded());
   readonly theme = signal<'dark' | 'light'>((new URLSearchParams(location.search).get('theme') as 'dark' | 'light') || (localStorage.getItem('qs-theme') as 'dark' | 'light') || 'dark');
   readonly expanded = signal(new Set<string>(['quality-studio', 'src', 'api']));
   readonly selected = signal('src/QualityStudio.Api/Program.cs');
@@ -141,5 +142,14 @@ export class App {
     const duration = performance.now() - start;
     performance.measure(name, { start, end: performance.now(), detail: { budget, path: this.selected() } });
     console.info(JSON.stringify({ event: name, durationMs: +duration.toFixed(2), budgetMs: budget, withinBudget: duration < budget }));
+  }
+
+  private detectEmbedded(): boolean {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return false;
+    try {
+      return window.self !== window.top;
+    } catch {
+      return true;
+    }
   }
 }
