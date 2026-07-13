@@ -164,6 +164,8 @@ and prefixes the child logs so API and web output stay readable. The default
 ports are API `5127` and product `4200`, and both can be overridden with
 `--api-port` / `--web-port` or `QUALITY_STUDIO_API_PORT` /
 `QUALITY_STUDIO_PRODUCT_PORT` when the launcher is invoked from another host.
+For alternate checkout layouts and automation, the launcher also accepts
+`--repo-root`, `--frontend-root`, and `QUALITY_STUDIO_NPM_COMMAND`.
 
 The shell distinguishes `Repository connected`, `API offline · preview data`,
 and `API offline` states so embedded review flows do not pretend the API is live

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,33 +10,34 @@ import http from 'node:http';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const launcher = resolve(repoRoot, 'scripts', 'dev-stack.mjs');
 
-test('launcher bootstraps install, starts both services, and can restart cleanly', async () => {
+test('launcher bootstraps a clean checkout, starts both services, and can restart cleanly', async () => {
   const sandbox = await mkdtemp(join(tmpdir(), 'qs-dev-stack-'));
+  const repoRoot = join(sandbox, 'repo');
+  const frontendRoot = join(repoRoot, 'frontend');
   const marker = join(sandbox, 'install-count.txt');
   const apiScript = join(sandbox, 'api.mjs');
   const webScript = join(sandbox, 'web.mjs');
-  const installScript = join(sandbox, 'install.mjs');
+  const npmStub = join(sandbox, 'npm.cmd');
+  await mkdir(frontendRoot, { recursive: true });
   await writeFile(apiScript, serviceScript('api-ready'));
   await writeFile(webScript, serviceScript('web-ready'));
-  await writeFile(installScript, `
-import { appendFile, mkdir } from 'node:fs/promises';
-await mkdir(process.env.QUALITY_STUDIO_MARKER_DIR, { recursive: true });
-await appendFile(process.env.QUALITY_STUDIO_MARKER_FILE, '1');
-`);
+  await writeFile(npmStub, `@echo off\r\necho ci>>"%QUALITY_STUDIO_MARKER_FILE%"\r\nexit /b 0\r\n`);
 
   const first = await runLauncher({
-    args: ['--api-script', apiScript, '--web-script', webScript, '--install-script', installScript, '--api-port', '51271', '--web-port', '42071'],
-    env: { ...process.env, QUALITY_STUDIO_MARKER_DIR: sandbox, QUALITY_STUDIO_MARKER_FILE: marker },
+    args: ['--repo-root', repoRoot, '--frontend-root', frontendRoot, '--api-script', apiScript, '--web-script', webScript, '--api-port', '51271', '--web-port', '42071'],
+    env: { ...process.env, QUALITY_STUDIO_MARKER_FILE: marker, QUALITY_STUDIO_NPM_COMMAND: npmStub },
   });
   assert.match(first.stdout, /ready: api=http:\/\/127\.0\.0\.1:51271 web=http:\/\/127\.0\.0\.1:42071/);
-  assert.equal((await readFile(marker, 'utf8')).length, 1);
+  assert.match(await readFile(marker, 'utf8'), /^ci\r?\n?$/);
+
+  await mkdir(join(frontendRoot, 'node_modules'), { recursive: true });
 
   const second = await runLauncher({
-    args: ['--api-script', apiScript, '--web-script', webScript, '--install-script', installScript, '--api-port', '51272', '--web-port', '42072'],
-    env: { ...process.env, QUALITY_STUDIO_MARKER_DIR: sandbox, QUALITY_STUDIO_MARKER_FILE: marker },
+    args: ['--repo-root', repoRoot, '--frontend-root', frontendRoot, '--api-script', apiScript, '--web-script', webScript, '--api-port', '51272', '--web-port', '42072'],
+    env: { ...process.env, QUALITY_STUDIO_MARKER_FILE: marker, QUALITY_STUDIO_NPM_COMMAND: npmStub },
   });
   assert.match(second.stdout, /ready: api=http:\/\/127\.0\.0\.1:51272 web=http:\/\/127\.0\.0\.1:42072/);
-  assert.equal((await readFile(marker, 'utf8')).length, 2);
+  assert.match(await readFile(marker, 'utf8'), /^ci\r?\n?$/);
 });
 
 test('launcher fails if API never becomes ready', async () => {

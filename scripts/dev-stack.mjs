@@ -1,20 +1,19 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, isAbsolute } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import http from 'node:http';
 import https from 'node:https';
 
-const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const frontendRoot = resolve(repoRoot, 'frontend');
+const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const defaultApiPort = Number(process.env.QUALITY_STUDIO_API_PORT ?? 5127);
 const defaultWebPort = Number(process.env.QUALITY_STUDIO_PRODUCT_PORT ?? 4200);
 const defaultHost = process.env.QUALITY_STUDIO_HOST ?? '127.0.0.1';
 const defaultTimeoutMs = Number(process.env.QUALITY_STUDIO_START_TIMEOUT_MS ?? 120000);
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npmCommand = process.env.QUALITY_STUDIO_NPM_COMMAND ?? (process.platform === 'win32' ? 'npm.cmd' : 'npm');
 
 const args = parseArgs(process.argv.slice(2));
 const state = {
@@ -31,6 +30,8 @@ main().catch(async error => {
 });
 
 async function main() {
+  const repoRoot = resolvePath(args['repo-root'] ?? defaultRepoRoot);
+  const frontendRoot = resolvePath(args['frontend-root'] ?? resolve(repoRoot, 'frontend'));
   const apiPort = Number(args['api-port'] ?? defaultApiPort);
   const webPort = Number(args['web-port'] ?? defaultWebPort);
   const host = args.host ?? defaultHost;
@@ -38,10 +39,10 @@ async function main() {
   const apiBaseUrl = `http://${host}:${apiPort}`;
   const webBaseUrl = `http://${host}:${webPort}`;
 
-  await ensureInstall(args, apiPort, webPort);
+  await ensureInstall(args, repoRoot, frontendRoot, apiPort, webPort);
 
   const proxyConfig = await createProxyConfig(apiPort);
-  const api = await startChild('api', buildApiCommand(args, apiPort), {
+  const api = await startChild('api', buildApiCommand(args, repoRoot, apiPort), {
     cwd: repoRoot,
     env: {
       QUALITY_STUDIO_API_PORT: String(apiPort),
@@ -95,7 +96,11 @@ function parseArgs(values) {
   return parsed;
 }
 
-async function ensureInstall(parsedArgs, apiPort, webPort) {
+function resolvePath(value) {
+  return isAbsolute(value) ? value : resolve(process.cwd(), value);
+}
+
+async function ensureInstall(parsedArgs, repoRoot, frontendRoot, apiPort, webPort) {
   const installScript = parsedArgs['install-script'];
   if (installScript) {
     await runCommand('install', 'node', [installScript], {
@@ -112,7 +117,7 @@ async function ensureInstall(parsedArgs, apiPort, webPort) {
   await runCommand('install', npmCommand, ['ci'], { cwd: frontendRoot });
 }
 
-function buildApiCommand(parsedArgs, apiPort) {
+function buildApiCommand(parsedArgs, repoRoot, apiPort) {
   if (parsedArgs['api-script']) {
     return ['node', parsedArgs['api-script']];
   }
@@ -121,7 +126,7 @@ function buildApiCommand(parsedArgs, apiPort) {
     'dotnet',
     'run',
     '--project',
-    'src/QualityStudio.Api/QualityStudio.Api.csproj',
+    resolve(repoRoot, 'src/QualityStudio.Api/QualityStudio.Api.csproj'),
     '--urls',
     `http://127.0.0.1:${apiPort}`,
     '--no-launch-profile',
