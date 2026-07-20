@@ -16,11 +16,11 @@ export class App {
   readonly embedded = signal(this.detectEmbedded());
   readonly theme = signal<'dark' | 'light'>((new URLSearchParams(location.search).get('theme') as 'dark' | 'light') || (localStorage.getItem('qs-theme') as 'dark' | 'light') || 'dark');
   readonly expanded = signal(new Set<string>(['quality-studio', 'src', 'api']));
-  readonly selected = signal('src/QualityStudio.Api/Program.cs');
+  readonly selected = signal(new URLSearchParams(location.search).get('path') || 'src/QualityStudio.Api/Program.cs');
   readonly query = signal('');
   readonly scrollTop = signal(0);
   readonly codeScrollTop = signal(0);
-  readonly activeKind = signal<ReviewKind>('code');
+  readonly activeKind = signal<ReviewKind>((new URLSearchParams(location.search).get('kind') as ReviewKind) || 'code');
   readonly selectedFinding = signal<ReviewFinding | null>(null);
   readonly handoverStatus = signal<Record<string, string>>({});
   readonly lineHeight = 22;
@@ -58,6 +58,24 @@ export class App {
 
   constructor() {
     effect(() => document.documentElement.dataset['theme'] = this.theme());
+    // Deep-linkable position: mirror the selected path and review kind into the
+    // URL, and report every navigation to an embedding Studio preview so its
+    // address bar stays current (url-preview-embed contract).
+    effect(() => {
+      const params = new URLSearchParams(location.search);
+      params.set('path', this.selected());
+      params.set('kind', this.activeKind());
+      history.replaceState(null, '', `?${params}`);
+      if (this.embedded()) {
+        window.parent.postMessage({ source: 'url-preview-embed', type: 'navigation', url: location.href }, '*');
+      }
+    });
+    // One-shot: once the tree is available, expand down to the deep-linked path.
+    const reveal = effect(() => {
+      if (!this.api.tree().length) return;
+      this.expanded.update(current => new Set([...current, ...this.ancestorIds(this.api.tree(), this.selected())]));
+      reveal.destroy();
+    });
     this.api.loadTree();
     this.open(this.selected(), false);
   }
@@ -142,6 +160,15 @@ export class App {
     const duration = performance.now() - start;
     performance.measure(name, { start, end: performance.now(), detail: { budget, path: this.selected() } });
     console.info(JSON.stringify({ event: name, durationMs: +duration.toFixed(2), budgetMs: budget, withinBudget: duration < budget }));
+  }
+
+  private ancestorIds(nodes: TreeNode[], path: string): string[] {
+    for (const node of nodes) {
+      if (node.path === path) return [node.id];
+      const below = this.ancestorIds(node.children, path);
+      if (below.length) return [node.id, ...below];
+    }
+    return [];
   }
 
   private detectEmbedded(): boolean {
