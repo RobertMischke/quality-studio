@@ -10,6 +10,7 @@ type FlatNode = TreeNode & { depth: number; state: ReviewState; decorations: { k
   templateUrl: './app.html',
   styleUrl: './app.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '(window:resize)': 'onResize()' },
 })
 export class App {
   readonly api = inject(QualityApi);
@@ -29,9 +30,11 @@ export class App {
     const q = this.query().trim().toLowerCase();
     return q ? this.flatten(this.api.tree(), true).filter(n => n.name.toLowerCase().includes(q) || n.path.toLowerCase().includes(q)) : this.treeRows();
   });
+  readonly viewportHeight = signal(typeof window === 'undefined' ? 1000 : window.innerHeight);
   readonly visibleRows = computed(() => {
     const start = Math.max(0, Math.floor(this.scrollTop() / 30) - 5);
-    return this.filteredRows().slice(start, start + 40).map((node, i) => ({ node, top: (start + i) * 30 }));
+    const count = Math.ceil(this.viewportHeight() / 30) + 12;
+    return this.filteredRows().slice(start, start + count).map((node, i) => ({ node, top: (start + i) * 30 }));
   });
   readonly codeLines = computed(() => this.api.file()?.content.split(/\r?\n/) ?? []);
   readonly activeMeta = computed(() => this.api.file()?.metaDocuments.find(meta => meta.kind === this.activeKind()) ?? null);
@@ -50,8 +53,9 @@ export class App {
   });
   readonly visibleLines = computed(() => {
     const start = Math.max(0, Math.floor(this.codeScrollTop() / this.lineHeight) - 10);
+    const count = Math.ceil(this.viewportHeight() / this.lineHeight) + 25;
     const markers = this.findingsByLine();
-    return this.codeLines().slice(start, start + 80).map((text, i) => ({ text, number: start + i + 1, top: (start + i) * this.lineHeight, findings: markers.get(start + i + 1) ?? [] }));
+    return this.codeLines().slice(start, start + count).map((text, i) => ({ text, number: start + i + 1, top: (start + i) * this.lineHeight, findings: markers.get(start + i + 1) ?? [] }));
   });
   readonly selectedNode = computed(() => this.flatten(this.api.tree(), true).find(n => n.path === this.selected()));
   readonly activeInputs = computed(() => this.api.inputs()[this.activeKind()] ?? null);
@@ -138,6 +142,8 @@ export class App {
   reviewed(meta: ReviewMetaDocument): string { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(meta.reviewedAt)); }
 
   scannedAt(value: string): string { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)); }
+
+  onResize(): void { this.viewportHeight.set(window.innerHeight); }
 
   setTheme(): void {
     const next = this.theme() === 'dark' ? 'light' : 'dark';
