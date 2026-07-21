@@ -348,8 +348,15 @@ static async Task<IResult> ImportFromAgentStudio(
     var results = new List<AgentStudioImportResultResponse>();
     foreach (var project in projects)
     {
-        if (project.Archived || string.IsNullOrWhiteSpace(project.RepositoryPath))
+        if (project.Archived)
         {
+            continue;
+        }
+
+        if (string.IsNullOrWhiteSpace(project.RepositoryPath))
+        {
+            results.Add(new AgentStudioImportResultResponse(
+                project.Id, project.DisplayName, null, "failed", null, "No repository path configured in Agent Studio."));
             continue;
         }
 

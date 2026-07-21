@@ -48,6 +48,25 @@ the configured repository, applies the template, then either prints or posts
 the card. The `FindingHandedOver` structured log records file, kind, dry-run
 state, returned task id, and elapsed time.
 
+## Project discovery contract
+
+The same `AgentStudio:BaseUrl` also backs a second, read-only contract used to
+discover local repositories to onboard, independent of the handover target
+(`ClientId`/`Project` are not required for this call):
+
+- `GET {BaseUrl}/api/projects`
+- no auth header — this is a read
+- response fields used by Quality Studio: `id`, `displayName`, `shortCode`,
+  nullable `repositoryPath`, and `archived`
+- success response: `200 [ { "id": "...", "displayName": "...", ... }, ... ]`
+
+`POST /api/repos/import-from-agent-studio` (see [api.md](../api.md#one-click-import-from-agent-studio))
+calls this endpoint to onboard every non-archived project with a valid,
+existing `repositoryPath` as a Quality Studio repository registration, by
+path so re-imports stay idempotent. The project list is fetched in full
+before any registry write, so an offline or unconfigured Agent Studio target
+fails the request cleanly with zero partial writes.
+
 ## Flow and ownership
 
 1. A review writes repository-owned review metadata.

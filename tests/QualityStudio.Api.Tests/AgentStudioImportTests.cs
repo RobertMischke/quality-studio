@@ -37,11 +37,12 @@ public sealed class AgentStudioImportTests : IAsyncLifetime
         var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
         Assert.Equal(1, json.GetProperty("imported").GetInt32());
         Assert.Equal(1, json.GetProperty("skipped").GetInt32());
-        Assert.Equal(1, json.GetProperty("failed").GetInt32());
+        Assert.Equal(2, json.GetProperty("failed").GetInt32());
 
         var results = json.GetProperty("results").EnumerateArray().ToArray();
-        // The archived project and the one without a repository path are excluded entirely, not reported as failures.
-        Assert.Equal(3, results.Length);
+        // The archived project is excluded entirely; every non-archived project is reported,
+        // including the one without a repository path, which reports as "failed".
+        Assert.Equal(4, results.Length);
 
         var quality = Assert.Single(results, result => result.GetProperty("projectId").GetString() == "PROJ-001");
         Assert.Equal("skipped", quality.GetProperty("status").GetString());
@@ -49,6 +50,10 @@ public sealed class AgentStudioImportTests : IAsyncLifetime
         var second = Assert.Single(results, result => result.GetProperty("projectId").GetString() == "PROJ-002");
         Assert.Equal("imported", second.GetProperty("status").GetString());
         Assert.Equal("sec", second.GetProperty("repositoryId").GetString());
+
+        var noPath = Assert.Single(results, result => result.GetProperty("projectId").GetString() == "PROJ-003");
+        Assert.Equal("failed", noPath.GetProperty("status").GetString());
+        Assert.Contains("No repository path", noPath.GetProperty("reason").GetString());
 
         var missing = Assert.Single(results, result => result.GetProperty("projectId").GetString() == "PROJ-005");
         Assert.Equal("failed", missing.GetProperty("status").GetString());

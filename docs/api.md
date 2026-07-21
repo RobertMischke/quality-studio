@@ -43,6 +43,33 @@ curl -X DELETE "http://127.0.0.1:5127/api/repos/payments"
 `DELETE` archives a registration and never changes repository files. The last active
 registration and the legacy-compatible `default` registration cannot be archived.
 
+### One-click import from Agent Studio
+
+```shell
+curl -X POST "http://127.0.0.1:5127/api/repos/import-from-agent-studio"
+# 200 {"results":[{"projectId":"PROJ-002","displayName":"Agent Studio","repositoryPath":"C:\\Projects\\...","status":"imported","repositoryId":"agent-studio","reason":null}, ...],"imported":1,"skipped":2,"failed":1}
+```
+
+Fetches Agent Studio's project list (`GET {AgentStudio:BaseUrl}/api/projects`, see
+[concepts/handover.md](concepts/handover.md#project-discovery-contract)) and onboards
+every non-archived project as a repository registration: `displayName` becomes the
+registration's display name, `shortCode` seeds its id. The full project list is read
+before any registry write, so a failure leaves the registry untouched: an offline or
+unreachable Agent Studio returns `502 Bad Gateway`, and a missing/incomplete
+`AgentStudio:BaseUrl` configuration returns `503 Service Unavailable`, both as
+problem-details responses.
+
+Each project appears exactly once in `results` with one of three statuses:
+
+- `imported` — a new registration was created; `repositoryId` is set.
+- `skipped` — a registration already exists for that normalized path (re-running the
+  import is idempotent).
+- `failed` — the project has no `repositoryPath`, the path does not resolve, or the
+  directory does not exist on this host; `reason` explains why.
+
+Archived Agent Studio projects are not considered candidates and never appear in
+`results`.
+
 ## Endpoint samples
 
 The following commands were exercised against the live host at
