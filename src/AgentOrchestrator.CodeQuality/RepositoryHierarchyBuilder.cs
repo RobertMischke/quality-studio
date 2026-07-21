@@ -82,21 +82,24 @@ public static partial class RepositoryHierarchyBuilder
                 Id(ReviewLevel.Namespace, [module.Id, group.Key]),
                 group.Key,
                 ReviewLevel.Namespace,
-                relativeProject);
+                $"{relativeProject}/.namespaces/{Uri.EscapeDataString(group.Key)}");
             module.AddChild(ns);
 
             foreach (var sourcePath in group)
             {
                 var relativeSource = Relative(root, sourcePath);
+                var sourceContent = File.ReadAllText(sourcePath);
                 var file = new HierarchyNode(
                     Id(ReviewLevel.File, [module.Id, relativeSource]),
                     Path.GetFileName(sourcePath),
                     ReviewLevel.File,
-                    relativeSource);
+                    relativeSource,
+                    new FileInfo(sourcePath).Length,
+                    sourceContent.Length == 0 ? 0 : sourceContent.Count(character => character == '\n') + 1);
                 ns.AddChild(file);
 
                 var symbols = new HashSet<string>(StringComparer.Ordinal);
-                foreach (Match match in FunctionRegex().Matches(File.ReadAllText(sourcePath)))
+                foreach (Match match in FunctionRegex().Matches(sourceContent))
                 {
                     var symbol = $"{group.Key}.{match.Groups[1].Value}";
                     if (!symbols.Add(symbol))

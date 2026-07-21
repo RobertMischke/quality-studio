@@ -25,7 +25,11 @@ public sealed class RepositoryHierarchyBuilderTests : IDisposable
 
         Assert.Equal(ReviewLevel.Project, project.Level);
         Assert.Equal("Demo.Greetings", ns.Name);
+        Assert.NotEqual(module.Path, ns.Path);
+        Assert.Contains("/.namespaces/Demo.Greetings", ns.Path, StringComparison.Ordinal);
         Assert.Equal("Greeter.cs", file.Name);
+        Assert.Equal(new FileInfo(Path.Combine(root, "src", "Demo", "Greeter.cs")).Length, file.SizeBytes);
+        Assert.Equal(4, file.LineCount);
         Assert.Equal("SayHello", function.Name);
         Assert.StartsWith("qs-v1/dotnet/function/", function.Id, StringComparison.Ordinal);
     }

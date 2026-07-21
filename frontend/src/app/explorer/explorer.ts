@@ -14,7 +14,7 @@ export class Explorer {
   readonly api = inject(QualityApi);
   readonly selectedPath = input.required<string>();
   readonly viewportHeight = input.required<number>();
-  readonly fileOpen = output<string>();
+  readonly nodeOpen = output<string>();
 
   readonly expanded = signal(new Set<string>(['quality-studio', 'src', 'api']));
   readonly query = signal('');
@@ -31,12 +31,25 @@ export class Explorer {
   });
 
   constructor() {
-    // One-shot: once the tree is available, expand down to the deep-linked path.
-    const reveal = effect(() => {
+    // Keep the selection visible without changing the selected container's own
+    // expansion state. The chevron therefore remains a toggle-only target.
+    effect(() => {
       if (!this.api.tree().length) return;
-      this.expanded.update(current => new Set([...current, ...ancestorIds(this.api.tree(), this.selectedPath())]));
-      reveal.destroy();
+      const ancestors = ancestorIds(this.api.tree(), this.selectedPath()).slice(0, -1);
+      if (ancestors.some(id => !this.expanded().has(id))) {
+        this.expanded.update(current => new Set([...current, ...ancestors]));
+      }
     });
+  }
+
+  open(node: FlatNode): void {
+    if (node.level !== 'file' && node.children.length) this.toggle(node);
+    this.nodeOpen.emit(node.path);
+  }
+
+  expandPath(path: string): void {
+    const ids = ancestorIds(this.api.tree(), path);
+    this.expanded.update(current => new Set([...current, ...ids]));
   }
 
   toggle(node: FlatNode): void {

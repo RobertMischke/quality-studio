@@ -30,7 +30,9 @@ await initialFileRequested;
 await page.locator('.tree-row').first().click();
 await page.locator('.tree-row').first().click();
 await page.getByRole('textbox', { name: 'Filter files' }).fill('Program.cs');
-await page.locator('.tree-row.selected').first().click();
+// Container clicks now select their list view, so open the filtered file row
+// directly instead of relying on the previous file selection to be retained.
+await page.locator('.tree-row').first().click();
 await page.waitForFunction(() => performance.getEntriesByName('qs.file.first-content').length >= 1);
 await page.getByRole('tab', { name: /performance/i }).click();
 await page.waitForFunction(() => performance.getEntriesByName('qs.review.aspect-switch').length >= 1);

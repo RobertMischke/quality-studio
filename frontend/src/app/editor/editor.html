@@ -1,41 +1,136 @@
 <section class="pane editor-pane">
-  <div class="tabs"><div class="tab active"><i class="status" [class]="'status ' + (selectedNode()?.state ?? 'fresh')"></i>{{ api.file()?.path?.split('/')?.at(-1) ?? 'Select a file' }}<span>×</span></div></div>
-  <div class="breadcrumbs">quality-studio <b>›</b> {{ api.file()?.path ?? 'No file selected' }}</div>
-  @if (activeMeta(); as meta) {
-    <header class="review-header">
-      <div class="aspect-switcher" role="tablist" aria-label="Review aspect">
-        @for (candidate of availableMeta(); track candidate.kind) {
-          <button role="tab" [attr.aria-selected]="activeKind() === candidate.kind" [class.active]="activeKind() === candidate.kind" (click)="selectKind(candidate.kind)">{{ candidate.kind }} <b>{{ candidate.grade.band }}</b><i class="status" [class]="'status ' + (selectedNode()?.kinds?.[candidate.kind]?.direct ?? 'missing')"></i></button>
-        }
-      </div>
-      <div class="review-provenance"><b>{{ meta.grade.score }} / 100</b><span>Reviewed {{ reviewed(meta.reviewedAt) }} by {{ meta.reviewer.agent }} · {{ meta.reviewer.model }}</span></div>
-    </header>
-    @if (activeState() === 'stale') { <div class="stale-banner" role="status"><b>Stale review</b><span>This grade and its findings describe an older version. Keep browsing, but rerun this {{ activeKind() }} review before acting.</span></div> }
-  }
-  <div class="code-viewport" (scroll)="codeScrollTop.set($any($event.target).scrollTop)">
-    @if (api.loading()) { <div class="loading">Opening file…</div> }
-    <div class="code-space" [style.height.px]="codeLines().length * lineHeight">
-      @for (line of visibleLines(); track line.number) {
-        <div class="code-line" [class.has-finding]="line.findings.length" [style.top.px]="line.top"><span class="line-number">{{ line.number }}</span>@if (line.findings.length) { <button class="finding-marker" [class]="'finding-marker ' + severity(line.findings)" [title]="findingTitle(line.findings)" [attr.aria-label]="findingTitle(line.findings)" (mouseenter)="findingSelect.emit(line.findings[0])" (focus)="findingSelect.emit(line.findings[0])" (click)="findingSelect.emit(line.findings[0])"></button> }<code>{{ line.text }}</code></div>
-      }
+  <div class="tabs">
+    <div class="tab active">
+      <i class="status" [class]="'status ' + (selectedNode()?.state ?? 'fresh')"></i>
+      {{ selectedNode()?.name ?? api.file()?.path?.split('/')?.at(-1) ?? 'Select an item' }}
+      <span>&times;</span>
     </div>
   </div>
-  <div class="statusbar">
-    @if (api.file(); as file) {
-      <span class="statusbar-path" [title]="file.path"><span class="statusbar-path-dir">{{ pathParts().directory }}</span><span class="statusbar-path-name">{{ pathParts().name }}</span></span>
-      <div class="statusbar-meta">
-        <span>Ln {{ topVisibleLine() }}</span>
-        <span>{{ codeLines().length }} lines</span>
-        <span>{{ fileSizeLabel() }}</span>
-        <span>{{ language() }}</span>
-        <span>{{ encodingLabel() }}</span>
-        <span>{{ lineEndingLabel() }}</span>
-        @if (activeMeta(); as meta) {
-          <span class="statusbar-review"><i class="status" [class]="'status ' + activeState()"></i>{{ activeKind() }} {{ meta.grade.band }} · {{ reviewed(meta.reviewedAt) }}</span>
+  <div class="breadcrumbs">quality-studio <b>&rsaquo;</b> {{ selectedPath() || 'No item selected' }}</div>
+
+  @if (isContainer()) {
+    <header class="folder-header">
+      <div>
+        <span class="eyebrow">{{ selectedNode()?.level }}</span>
+        <h2>{{ selectedNode()?.name }}</h2>
+        <p>{{ selectedNode()?.children?.length ?? 0 }} direct children</p>
+      </div>
+      <div class="rollups" aria-label="Rolled-up review states">
+        @for (kind of reviewKinds; track kind) {
+          <span>
+            <i class="status" [class]="'status ' + (selectedNode()?.kinds?.[kind]?.descendants ?? 'missing')"></i>
+            <b>{{ kind }}</b>
+            <small>{{ selectedNode()?.kinds?.[kind]?.band ?? '-' }} @if (selectedNode()?.kinds?.[kind]?.score != null) { &middot; {{ selectedNode()?.kinds?.[kind]?.score }} }</small>
+          </span>
         }
       </div>
+    </header>
+
+    <div class="folder-table" role="table" aria-label="Direct children of selected container">
+      <div class="folder-columns" role="row">
+        <button type="button" role="columnheader" (click)="sortBy('name')">Name{{ sortIndicator('name') }}</button>
+        @for (kind of reviewKinds; track kind) {
+          <button type="button" role="columnheader" (click)="sortBy(kind)">{{ kind }}{{ sortIndicator(kind) }}</button>
+        }
+        <button type="button" role="columnheader" (click)="sortBy('state')">Review{{ sortIndicator('state') }}</button>
+        <button type="button" role="columnheader" (click)="sortBy('findings')">Findings{{ sortIndicator('findings') }}</button>
+        <button type="button" role="columnheader" (click)="sortBy('reviewedAt')">Reviewed{{ sortIndicator('reviewedAt') }}</button>
+        <button type="button" role="columnheader" (click)="sortBy('size')">Size{{ sortIndicator('size') }}</button>
+        <button type="button" role="columnheader" (click)="sortBy('lines')">Lines{{ sortIndicator('lines') }}</button>
+      </div>
+
+      <div class="folder-viewport" (scroll)="folderScrollTop.set($any($event.target).scrollTop)">
+        <div class="folder-space" [style.height.px]="folderRows().length * folderRowHeight">
+          @for (item of visibleFolderRows(); track item.node.id) {
+            <button class="folder-row" type="button" role="row" [style.top.px]="item.top" (click)="nodeOpen.emit(item.node.path)">
+              <span class="name-cell" role="cell">
+                <i>{{ item.node.level === 'file' ? 'F' : 'D' }}</i>
+                <span>
+                  <b>{{ item.node.name }}</b>
+                  <small>{{ item.node.level }}</small>
+                </span>
+              </span>
+              @for (kind of reviewKinds; track kind) {
+                <span class="grade-cell" role="cell">
+                  <i class="status" [class]="'status ' + (item.node.kinds[kind]?.overall ?? 'missing')"></i>
+                  <b>{{ item.node.kinds[kind]?.band ?? '-' }}</b>
+                  <small>{{ item.node.kinds[kind]?.score ?? '-' }}</small>
+                </span>
+              }
+              <span class="state-cell" role="cell" aria-label="Review states">
+                @for (kind of reviewKinds; track kind) {
+                  <i class="status" [class]="'status ' + (item.node.kinds[kind]?.overall ?? 'missing')" [title]="kind + ': ' + (item.node.kinds[kind]?.overall ?? 'missing')"></i>
+                }
+              </span>
+              <span role="cell">{{ item.node.findingsCount ?? 0 }}</span>
+              <span class="reviewed-cell" role="cell">{{ reviewedOrDash(item.node.reviewedAt) }}</span>
+              <span role="cell">{{ formatBytes(item.node.sizeBytes) }}</span>
+              <span role="cell">{{ item.node.lineCount ?? '-' }}</span>
+            </button>
+          } @empty {
+            <div class="empty-folder">This container has no direct children.</div>
+          }
+        </div>
+      </div>
+    </div>
+  } @else {
+    @if (activeMeta(); as meta) {
+      <header class="review-header">
+        <div class="aspect-switcher" role="tablist" aria-label="Review aspect">
+          @for (candidate of availableMeta(); track candidate.kind) {
+            <button role="tab" [attr.aria-selected]="activeKind() === candidate.kind" [class.active]="activeKind() === candidate.kind" (click)="selectKind(candidate.kind)">
+              {{ candidate.kind }} <b>{{ candidate.grade.band }}</b>
+              <i class="status" [class]="'status ' + (selectedNode()?.kinds?.[candidate.kind]?.direct ?? 'missing')"></i>
+            </button>
+          }
+        </div>
+        <div class="review-provenance"><b>{{ meta.grade.score }} / 100</b><span>Reviewed {{ reviewed(meta.reviewedAt) }} by {{ meta.reviewer.agent }} &middot; {{ meta.reviewer.model }}</span></div>
+      </header>
+      @if (activeState() === 'stale') {
+        <div class="stale-banner" role="status"><b>Stale review</b><span>This grade and its findings describe an older version. Keep browsing, but rerun this {{ activeKind() }} review before acting.</span></div>
+      }
+    }
+
+    <div class="code-viewport" (scroll)="codeScrollTop.set($any($event.target).scrollTop)">
+      @if (api.loading()) { <div class="loading">Opening file...</div> }
+      <div class="code-space" [style.height.px]="codeLines().length * lineHeight">
+        @for (line of visibleLines(); track line.number) {
+          <div class="code-line" [class.has-finding]="line.findings.length" [style.top.px]="line.top">
+            <span class="line-number">{{ line.number }}</span>
+            @if (line.findings.length) {
+              <button class="finding-marker" [class]="'finding-marker ' + severity(line.findings)" [title]="findingTitle(line.findings)" [attr.aria-label]="findingTitle(line.findings)" (mouseenter)="findingSelect.emit(line.findings[0])" (focus)="findingSelect.emit(line.findings[0])" (click)="findingSelect.emit(line.findings[0])"></button>
+            }
+            <code>{{ line.text }}</code>
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <div class="statusbar">
+    @if (isContainer()) {
+      <span>{{ selectedNode()?.children?.length ?? 0 }} direct children</span>
+      <span>{{ selectedNode()?.level }}</span>
     } @else {
-      <span class="statusbar-empty">No file open</span>
+      @if (api.file(); as file) {
+        <span class="statusbar-path" [title]="file.path">
+          <span class="statusbar-path-dir">{{ pathParts().directory }}</span>
+          <span class="statusbar-path-name">{{ pathParts().name }}</span>
+        </span>
+        <div class="statusbar-meta">
+          <span>Ln {{ topVisibleLine() }}</span>
+          <span>{{ codeLines().length }} lines</span>
+          <span>{{ fileSizeLabel() }}</span>
+          <span>{{ language() }}</span>
+          <span>{{ encodingLabel() }}</span>
+          <span>{{ lineEndingLabel() }}</span>
+          @if (activeMeta(); as meta) {
+            <span class="statusbar-review"><i class="status" [class]="'status ' + activeState()"></i>{{ activeKind() }} {{ meta.grade.band }} &middot; {{ reviewed(meta.reviewedAt) }}</span>
+          }
+        </div>
+      } @else {
+        <span class="statusbar-empty">No file open</span>
+      }
     }
   </div>
 </section>

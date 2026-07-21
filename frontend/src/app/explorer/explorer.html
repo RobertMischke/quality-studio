@@ -5,13 +5,17 @@
   <div class="virtual-tree" (scroll)="scrollTop.set($any($event.target).scrollTop)">
     <div class="tree-space" [style.height.px]="filteredRows().length * 30">
       @for (item of visibleRows(); track item.node.id) {
-        <button class="tree-row" [class.selected]="selectedPath() === item.node.path" [style.top.px]="item.top" [style.padding-left.px]="10 + item.node.depth * 16" (click)="item.node.level === 'file' ? fileOpen.emit(item.node.path) : item.node.children.length ? toggle(item.node) : null">
-          <span class="chevron" [class.open]="expanded().has(item.node.id)">{{ item.node.children.length ? '›' : '' }}</span>
-          <span class="node-icon">{{ item.node.children.length ? '▰' : '≡' }}</span><span class="node-name">{{ item.node.name }}</span>
-          <span class="tree-states" aria-label="Rolled-up review states">
-            @for (decoration of item.node.decorations; track decoration.kind) { <i class="status" [class]="'status ' + decoration.state" [title]="decoration.label"><span class="sr-only">{{ decoration.label }}</span></i> }
-          </span>
-        </button>
+        <div class="tree-row" [class.selected]="selectedPath() === item.node.path" [style.top.px]="item.top" [style.padding-left.px]="6 + item.node.depth * 16" (click)="open(item.node)">
+          @if (item.node.children.length) {
+            <button class="chevron-button" type="button" [attr.aria-label]="(expanded().has(item.node.id) ? 'Collapse ' : 'Expand ') + item.node.name" title="Toggle expansion only" (click)="$event.stopPropagation(); toggle(item.node)"><span class="chevron" [class.open]="expanded().has(item.node.id)">›</span></button>
+          } @else { <span class="chevron-spacer"></span> }
+          <button class="node-select" type="button">
+            <span class="node-icon">{{ item.node.level === 'file' ? '≡' : '▰' }}</span><span class="node-name">{{ item.node.name }}</span>
+            <span class="tree-states" aria-label="Rolled-up review states">
+              @for (decoration of item.node.decorations; track decoration.kind) { <i class="status" [class]="'status ' + decoration.state" [title]="decoration.label"><span class="sr-only">{{ decoration.label }}</span></i> }
+            </span>
+          </button>
+        </div>
       }
     </div>
   </div>

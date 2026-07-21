@@ -4,7 +4,18 @@ import { firstValueFrom } from 'rxjs';
 
 export type ReviewState = 'fresh' | 'stale' | 'missing';
 export interface KindState { direct: ReviewState; descendants: ReviewState; overall: ReviewState; score: number | null; band: string | null; metaPath: string | null; }
-export interface TreeNode { id: string; name: string; level: string; path: string; kinds: Record<string, KindState>; children: TreeNode[]; }
+export interface TreeNode {
+  id: string;
+  name: string;
+  level: string;
+  path: string;
+  kinds: Record<string, KindState>;
+  findingsCount?: number;
+  reviewedAt?: string | null;
+  sizeBytes?: number | null;
+  lineCount?: number | null;
+  children: TreeNode[];
+}
 export type ReviewKind = 'code' | 'security' | 'performance';
 export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export interface FindingPosition { line: number; column: number; }
@@ -242,6 +253,8 @@ export class QualityApi {
       console.warn(JSON.stringify({ event: 'qs.data.file-demo-fallback', path, reason: error instanceof Error ? error.message : 'API unavailable' }));
     } finally { this.loading.set(false); }
   }
+
+  clearFile(): void { this.file.set(null); }
 
   async createTask(request: HandoverRequest): Promise<HandoverResult> {
     return firstValueFrom(this.http.post<HandoverResult>(`${this.repositoryApiBase()}/handover`, request));

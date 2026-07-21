@@ -8,7 +8,7 @@ public sealed class HierarchyNode
     private readonly List<HierarchyNode> children = [];
     private readonly Dictionary<ReviewKind, AttachedReviewMetaDocument> documents = [];
 
-    public HierarchyNode(string id, string name, ReviewLevel level, string path)
+    public HierarchyNode(string id, string name, ReviewLevel level, string path, long? sizeBytes = null, int? lineCount = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -17,6 +17,8 @@ public sealed class HierarchyNode
         Name = name;
         Level = level;
         Path = path;
+        SizeBytes = sizeBytes;
+        LineCount = lineCount;
     }
 
     public string Id { get; }
@@ -26,6 +28,11 @@ public sealed class HierarchyNode
     public ReviewLevel Level { get; }
 
     public string Path { get; }
+
+    /// <summary>Physical source information, present only for file nodes.</summary>
+    public long? SizeBytes { get; }
+
+    public int? LineCount { get; }
 
     public IReadOnlyList<HierarchyNode> Children => children;
 

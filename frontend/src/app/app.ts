@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Editor } from './editor/editor';
 import { Explorer } from './explorer/explorer';
@@ -40,6 +40,7 @@ type ResizablePane = 'explorer' | 'review';
 })
 export class App {
   readonly api = inject(QualityApi);
+  readonly explorer = viewChild(Explorer);
   readonly embedded = signal(this.detectEmbedded());
   readonly theme = signal<'dark' | 'light'>((new URLSearchParams(location.search).get('theme') as 'dark' | 'light') || (localStorage.getItem('qs-theme') as 'dark' | 'light') || 'dark');
   readonly selected = signal(new URLSearchParams(location.search).get('path') || 'src/QualityStudio.Api/Program.cs');
@@ -106,13 +107,21 @@ export class App {
     const preferredRepository = new URLSearchParams(location.search).get('repo');
     await this.api.loadRepositories(preferredRepository);
     await this.api.loadTree();
-    const path = this.filePathOrFirst(this.selected());
+    const path = this.selectionPathOrFirst(this.selected());
     if (path) this.open(path, false);
   }
 
-  open(path: string, track = true): void {
+  open(path: string, track = true, expandContainer = false): void {
     const start = performance.now();
     this.selected.set(path);
+    const node = flattenTree(this.api.tree(), new Set(), true).find(candidate => candidate.path === path);
+    if (node?.level !== 'file') {
+      this.api.clearFile();
+      this.selectedFinding.set(null);
+      if (expandContainer) this.explorer()?.expandPath(path);
+      console.info(JSON.stringify({ event: 'qs.container.opened', path, level: node?.level ?? 'unknown', childCount: node?.children.length ?? 0 }));
+      return;
+    }
     this.api.loadFile(path).then(() => {
       const kinds = this.api.file()?.metaDocuments.map(meta => meta.kind) ?? [];
       if (!kinds.includes(this.activeKind())) this.activeKind.set(kinds[0] ?? 'code');
@@ -133,7 +142,7 @@ export class App {
   async switchRepository(id: string): Promise<void> {
     this.repositoryMenuOpen.set(false);
     await this.api.selectRepository(id);
-    const path = this.filePathOrFirst('');
+    const path = this.selectionPathOrFirst('');
     if (path) this.open(path, false);
   }
 
@@ -195,7 +204,7 @@ export class App {
       await this.api.archiveRepository(repository.id);
       if (wasSelected) {
         await this.api.selectRepository(this.api.selectedRepositoryId());
-        const path = this.filePathOrFirst('');
+        const path = this.selectionPathOrFirst('');
         if (path) this.open(path, false);
         this.repositoryDialogOpen.set(false);
       } else if (this.api.repositories().length) {
@@ -311,9 +320,9 @@ export class App {
     console.info(JSON.stringify({ event: name, durationMs: +duration.toFixed(2), budgetMs: budget, withinBudget: duration < budget }));
   }
 
-  private filePathOrFirst(preferred: string): string | null {
+  private selectionPathOrFirst(preferred: string): string | null {
     const nodes = flattenTree(this.api.tree(), new Set(), true);
-    const preferredNode = nodes.find(node => node.path === preferred && node.level === 'file');
+    const preferredNode = nodes.find(node => node.path === preferred);
     return preferredNode?.path ?? nodes.find(node => node.level === 'file')?.path ?? null;
   }
 

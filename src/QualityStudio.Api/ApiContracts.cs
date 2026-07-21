@@ -11,18 +11,62 @@ public sealed record TreeNodeResponse(
     string Level,
     string Path,
     IReadOnlyDictionary<string, KindStateResponse> Kinds,
+    int FindingsCount,
+    string? ReviewedAt,
+    long? SizeBytes,
+    int? LineCount,
     IReadOnlyList<TreeNodeResponse> Children)
 {
-    public static TreeNodeResponse From(HierarchyNode node) => new(
-        node.Id,
-        node.Name,
-        node.Level.ToString().ToLowerInvariant(),
-        node.Path,
-        node.AggregatedStates.ToDictionary(
-            pair => pair.Key.ToString().ToLowerInvariant(),
-            pair => KindStateResponse.From(node, pair.Value),
-            StringComparer.Ordinal),
-        node.Children.Select(From).ToArray());
+    public static TreeNodeResponse From(HierarchyNode node)
+    {
+        var reviewSummary = DirectReviewSummary.From(node);
+        return new(
+            node.Id,
+            node.Name,
+            node.Level.ToString().ToLowerInvariant(),
+            node.Path,
+            node.AggregatedStates.ToDictionary(
+                pair => pair.Key.ToString().ToLowerInvariant(),
+                pair => KindStateResponse.From(node, pair.Value),
+                StringComparer.Ordinal),
+            reviewSummary.FindingsCount,
+            reviewSummary.ReviewedAt,
+            node.SizeBytes,
+            node.LineCount,
+            node.Children.Select(From).ToArray());
+    }
+
+    private sealed record DirectReviewSummary(int FindingsCount, string? ReviewedAt)
+    {
+        public static DirectReviewSummary From(HierarchyNode node)
+        {
+            var findingsCount = 0;
+            DateTimeOffset? reviewedAt = null;
+            foreach (var document in node.Documents.Values)
+            {
+                if (document.Payload is null)
+                {
+                    continue;
+                }
+
+                using var json = JsonDocument.Parse(document.Payload);
+                var root = json.RootElement;
+                if (root.TryGetProperty("findings", out var findings) && findings.ValueKind == JsonValueKind.Array)
+                {
+                    findingsCount += findings.GetArrayLength();
+                }
+
+                if (root.TryGetProperty("reviewedAt", out var reviewedAtElement) &&
+                    reviewedAtElement.TryGetDateTimeOffset(out var candidate) &&
+                    (reviewedAt is null || candidate > reviewedAt))
+                {
+                    reviewedAt = candidate;
+                }
+            }
+
+            return new(findingsCount, reviewedAt?.ToString("O"));
+        }
+    }
 }
 
 public sealed record KindStateResponse(

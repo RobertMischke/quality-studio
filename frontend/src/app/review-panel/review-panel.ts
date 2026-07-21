@@ -18,7 +18,9 @@ export class ReviewPanel {
   readonly findingSelect = output<ReviewFinding>();
 
   readonly handoverStatus = signal<Record<string, string>>({});
-  readonly activeMeta = computed(() => this.api.file()?.metaDocuments.find(meta => meta.kind === this.activeKind()) ?? null);
+  readonly activeMeta = computed(() => this.selectedNode()?.level === 'file'
+    ? this.api.file()?.metaDocuments.find(meta => meta.kind === this.activeKind()) ?? null
+    : null);
   readonly activeState = computed(() => this.selectedNode()?.kinds[this.activeKind()]?.direct ?? 'missing');
   readonly securityNodeState = computed(() => this.selectedNode()?.kinds['security']?.direct ?? 'missing');
   readonly activeInputs = computed(() => this.api.inputs()[this.activeKind()] ?? null);
