@@ -2,6 +2,8 @@
 
 The finding handover endpoints and Agent Studio configuration are documented in
 [concepts/handover.md](concepts/handover.md).
+Review token persistence, usage response semantics, and quota ownership are
+documented in [usage-telemetry.md](usage-telemetry.md).
 
 Run the development host from the repository root:
 
@@ -71,6 +73,17 @@ curl "http://127.0.0.1:5127/api/usage?since=2026-07-01T00:00:00Z&kind=code"
 curl "http://127.0.0.1:5127/api/quotas"
 # 200 {"at":"...","ttlSeconds":600,"providers":[...]}
 ```
+
+`since` is an optional ISO 8601 timestamp and `kind` is an optional exact review
+kind (`code`, `security`, or `performance`). The usage response includes totals,
+`byModel`, `byKind`, and `byDay` aggregates plus the 50 newest matching ledger
+entries. Token totals treat unavailable token fields as zero while each recent
+entry preserves `null`, distinguishing unreported usage from a reported zero.
+
+`/api/quotas` is a global, presentation-safe snapshot from Coding Agent Runner's
+quota service. It may return an empty `providers` array while credentials or
+provider data are unavailable; callers must treat that as an unavailable state,
+not as unlimited quota.
 
 All repository operations also have a scoped form, for example
 `/api/repos/payments/tree?path=`, `/api/repos/payments/file?path=README.md`,

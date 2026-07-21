@@ -137,6 +137,14 @@ false pass.
 
 Global and repository-owned Markdown guidelines can be resolved into review prompts with deterministic overrides and an explicit size budget. See [`docs/review-inputs.md`](docs/review-inputs.md) for the `.quality/inputs/` convention and `--explain-inputs` usage.
 
+## Review usage telemetry
+
+Agent-backed reviews persist their model, CLI, token counts, duration, and run
+identity both with the review truth and in a repository-local append-only ledger.
+The API exposes repository usage aggregates and provider quota availability. See
+[`docs/usage-telemetry.md`](docs/usage-telemetry.md) for the versioned storage
+contracts, endpoint semantics, quota source of truth, and unavailable behavior.
+
 ## Repository layout
 
 - `src/AgentOrchestrator.CodeQuality/` contains the core quality model library.
