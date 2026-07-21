@@ -126,6 +126,13 @@ export class Explorer {
     this.activateNode(node);
   }
 
+  onChevronClick(event: MouseEvent, node: FlatNode): void {
+    event.stopPropagation();
+    if (!node.children.length) return;
+    this.activeId.set(node.id);
+    this.toggle(node);
+  }
+
   onTreeKeydown(event: KeyboardEvent): void {
     const rows = this.filteredRows();
     if (!rows.length) return;

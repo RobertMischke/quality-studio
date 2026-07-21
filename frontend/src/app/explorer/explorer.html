@@ -12,7 +12,9 @@
           [attr.aria-expanded]="item.node.children.length ? expanded().has(item.node.id) : null"
           [attr.aria-selected]="selectedPath() === item.node.path" [attr.tabindex]="activeId() === item.node.id ? 0 : -1"
           [style.top.px]="item.top" [style.padding-left.px]="10 + item.node.depth * 16" (click)="onRowClick(item.node)">
-          <span class="chevron" [class.open]="expanded().has(item.node.id)">{{ item.node.children.length ? '›' : '' }}</span>
+          <span class="chevron" [class.open]="expanded().has(item.node.id)"
+            [title]="item.node.children.length ? 'Toggle container without opening it' : ''"
+            (click)="onChevronClick($event, item.node)">{{ item.node.children.length ? '›' : '' }}</span>
           <span class="node-icon">{{ item.node.children.length ? '▰' : '≡' }}</span><span class="node-name">{{ item.node.name }}</span>
           <span class="tree-states" aria-label="Rolled-up review states">
             @for (decoration of item.node.decorations; track decoration.kind) { <i class="status" [class]="'status ' + decoration.state" [title]="decoration.label"><span class="sr-only">{{ decoration.label }}</span></i> }
