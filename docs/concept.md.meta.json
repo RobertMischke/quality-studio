@@ -47,6 +47,12 @@
       "title": "QS-13: Review inputs - global \u002B per-project guidelines feeding the prompts",
       "linkedAt": "2026-07-11T21:27:34.0751055Z",
       "source": "auto"
+    },
+    {
+      "key": "QS-24",
+      "title": "QS telemetry: persist token usage for all review operations and show available quotas in the topbar",
+      "linkedAt": "2026-07-21T12:47:25.8205511Z",
+      "source": "auto"
     }
   ]
 }
