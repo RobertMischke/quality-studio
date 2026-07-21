@@ -63,14 +63,22 @@ curl "http://127.0.0.1:5127/api/inputs"
 # 200 {"level":"file","kinds":{"code":{"inputs":[...],"omissions":[...]},...}}
 
 curl -X POST "http://127.0.0.1:5127/api/review" -H "Content-Type: application/json" -d "{}"
-# 501 {"title":"Review runner unavailable","status":501,"detail":"Review triggering requires the optional QS-6 review runner, which is not available in this build."}
+# 202 {"id":"review-...","state":"queued",...}
+
+curl "http://127.0.0.1:5127/api/usage?since=2026-07-01T00:00:00Z&kind=code"
+# 200 {"runs":12,"inputTokens":...,"byModel":[...],"byKind":[...],"byDay":[...],"recent":[...]}
+
+curl "http://127.0.0.1:5127/api/quotas"
+# 200 {"at":"...","ttlSeconds":600,"providers":[...]}
 ```
 
 All repository operations also have a scoped form, for example
 `/api/repos/payments/tree?path=`, `/api/repos/payments/file?path=README.md`,
 `/api/repos/payments/scan`, `/api/repos/payments/security/scan`,
 `/api/repos/payments/inputs`, `/api/repos/payments/handover`, and
-`/api/repos/payments/review`. The unscoped routes above remain aliases for the active
+`/api/repos/payments/review`. Usage also has the scoped form
+`/api/repos/payments/usage`; quotas are per signed-in user/provider and remain global.
+The unscoped routes above remain aliases for the active
 `default` registration so existing callers continue to work.
 
 Paths are always repository-relative. Absolute paths and traversal outside the

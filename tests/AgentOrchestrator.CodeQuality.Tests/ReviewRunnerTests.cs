@@ -193,6 +193,17 @@ public sealed class ReviewRunnerTests
             Assert.Equal("test-agent", json.GetProperty("reviewer").GetProperty("agent").GetString());
             Assert.Equal("deterministic", json.GetProperty("reviewer").GetProperty("model").GetString());
             Assert.Equal("run-test", json.GetProperty("reviewer").GetProperty("runId").GetString());
+            var usage = json.GetProperty("reviewer").GetProperty("usage");
+            Assert.Equal("test-agent", usage.GetProperty("cliType").GetString());
+            Assert.Equal(120, usage.GetProperty("inputTokens").GetInt64());
+            Assert.Equal(34, usage.GetProperty("outputTokens").GetInt64());
+            Assert.Equal(56, usage.GetProperty("cachedInputTokens").GetInt64());
+            Assert.Equal(890, usage.GetProperty("durationMs").GetInt64());
+            var ledger = await UsageLedger.QueryAsync(root, kind: "security", cancellationToken: cancellationToken);
+            var ledgerEntry = Assert.Single(ledger.Recent);
+            Assert.Equal("run-test", ledgerEntry.RunId);
+            Assert.Equal("src/Small.cs", ledgerEntry.Path);
+            Assert.Equal(120, ledger.InputTokens);
             Assert.Equal("correctness-1", json.GetProperty("findings")[0].GetProperty("id").GetString());
             Assert.Contains("Global rule.", agent.Prompt, StringComparison.Ordinal);
             Assert.Contains("Project rule.", agent.Prompt, StringComparison.Ordinal);
@@ -259,6 +270,41 @@ public sealed class ReviewRunnerTests
         });
     }
 
+    [Fact]
+    public async Task ReviewAsync_PersistsAndReportsUsageWhenResponseValidationFails()
+    {
+        await WithReviewFileAsync(async (root, _) =>
+        {
+            var recorded = new List<ReviewUsageEntry>();
+            var runner = new ReviewRunner(new FakeAgent(response: "{}"), usageRecorded: recorded.Add);
+
+            await Assert.ThrowsAsync<ReviewResponseException>(() => runner.ReviewAsync(
+                new ReviewRequest("src/Small.cs", RepositoryRoot: root), TestContext.Current.CancellationToken));
+
+            Assert.Equal("run-test", Assert.Single(recorded).RunId);
+            Assert.Equal(120, recorded[0].Tokens.InputTokens);
+            Assert.Equal("run-test", Assert.Single((await UsageLedger.QueryAsync(root,
+                cancellationToken: TestContext.Current.CancellationToken)).Recent).RunId);
+        });
+    }
+
+    [Fact]
+    public async Task ReviewAsync_PersistsUsageWhenAgentExecutionFails()
+    {
+        await WithReviewFileAsync(async (root, _) =>
+        {
+            var recorded = new List<ReviewUsageEntry>();
+            var runner = new ReviewRunner(new FailingAgent(), usageRecorded: recorded.Add);
+
+            await Assert.ThrowsAsync<ReviewAgentRunException>(() => runner.ReviewAsync(
+                new ReviewRequest("src/Small.cs", RepositoryRoot: root), TestContext.Current.CancellationToken));
+
+            Assert.Equal(321, Assert.Single(recorded).Tokens.InputTokens);
+            Assert.Equal("failed-run", Assert.Single((await UsageLedger.QueryAsync(root,
+                cancellationToken: TestContext.Current.CancellationToken)).Recent).RunId);
+        });
+    }
+
     private static async Task WithReviewFileAsync(Func<string, string, Task> test)
     {
         var root = Path.Combine(Path.GetTempPath(), "quality-review-tests", Guid.NewGuid().ToString("N"));
@@ -299,8 +345,19 @@ public sealed class ReviewRunnerTests
             Prompt = prompt;
             WorkingDirectory = workingDirectory;
             _onRun?.Invoke();
-            return Task.FromResult(new ReviewAgentResult("run-test", $"```json\n{_response}\n```"));
+            return Task.FromResult(new ReviewAgentResult("run-test", $"```json\n{_response}\n```",
+                new TokenUsage(120, 34, 56, 7, 890), "deterministic"));
         }
+    }
+
+    private sealed class FailingAgent : IReviewAgent
+    {
+        public string AgentName => "test-agent";
+        public string? Model => "requested-model";
+
+        public Task<ReviewAgentResult> RunAsync(string prompt, string workingDirectory, CancellationToken cancellationToken = default) =>
+            Task.FromException<ReviewAgentResult>(new ReviewAgentRunException("failed-run",
+                new TokenUsage(321, 12, 30, 2, 456), "effective-model", new IOException("stream failed")));
     }
 }
 

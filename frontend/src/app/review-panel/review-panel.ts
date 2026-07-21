@@ -52,4 +52,11 @@ export class ReviewPanel {
   scannedAt(value: string): string { return formatDateTime(value); }
 
   runProgress(completed: number, total: number): number { return total ? completed / total * 100 : 0; }
+
+  formatTokens(value: number | null | undefined): string {
+    if (value === null || value === undefined) return 'unavailable';
+    return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}m tok` : value >= 1_000 ? `${(value / 1_000).toFixed(1)}k tok` : `${value} tok`;
+  }
+
+  formatDuration(value: number): string { return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`; }
 }

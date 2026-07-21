@@ -29,6 +29,15 @@
       <span>{{ api.connectionLabel() }}</span>
       @if (embedded()) { <span class="embedded-badge">Embedded</span> }
     </div>
+    <div class="quota-strip" aria-label="Provider quotas">
+      @for (provider of api.quotas().providers; track provider.provider) {
+        <span class="quota-chip" [class.fresh]="quotaRemaining(provider) !== null && quotaRemaining(provider)! > 10" [class.stale]="quotaRemaining(provider) !== null && quotaRemaining(provider)! <= 10" [class.missing]="quotaRemaining(provider) === null" [title]="quotaTooltip(provider)">
+          {{ provider.provider }} <b>{{ quotaRemainingLabel(provider) }}</b>
+        </span>
+      } @empty {
+        <span class="quota-chip missing" title="No provider quota has been reported yet. The API refreshes the runner quota cache in the background.">Quota unavailable</span>
+      }
+    </div>
     <button class="icon-button" type="button" (click)="toggleExplorer()" [attr.aria-label]="(explorerVisible() ? 'Hide' : 'Show') + ' explorer'" [title]="(explorerVisible() ? 'Hide' : 'Show') + ' explorer · Ctrl+B'">◧</button>
     <button class="icon-button" type="button" (click)="toggleReview()" [attr.aria-label]="(reviewVisible() ? 'Hide' : 'Show') + ' review panel'" [title]="(reviewVisible() ? 'Hide' : 'Show') + ' review panel · Ctrl+Alt+B'">◨</button>
     <button class="icon-button" (click)="setTheme()" [attr.aria-label]="'Switch to ' + (theme() === 'dark' ? 'light' : 'dark') + ' theme'">{{ theme() === 'dark' ? '☼' : '◐' }}</button>

@@ -13,7 +13,16 @@
   "reviewer": {
     "agent": "codex",
     "model": "gpt-5",
-    "agentVersion": "1.0.0"
+    "agentVersion": "1.0.0",
+    "runId": "quality-sample",
+    "usage": {
+      "cliType": "codex",
+      "inputTokens": 1240,
+      "outputTokens": 286,
+      "cachedInputTokens": 800,
+      "reasoningOutputTokens": 92,
+      "durationMs": 18450
+    }
   },
   "reviewedHash": {
     "algorithm": "sha256",

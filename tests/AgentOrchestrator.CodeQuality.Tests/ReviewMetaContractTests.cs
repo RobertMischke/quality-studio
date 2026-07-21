@@ -103,7 +103,39 @@ public sealed class ReviewMetaContractTests
         });
 
         Assert.True(result.IsValid, result.ToString());
-        Assert.Equal(ReviewKind.Code, ReviewMetaJson.Deserialize(sample.RootElement.GetRawText()).Kind);
+        var loaded = ReviewMetaJson.Deserialize(sample.RootElement.GetRawText());
+        Assert.Equal(ReviewKind.Code, loaded.Kind);
+        Assert.Equal(1240, loaded.Reviewer.Usage?.InputTokens);
+    }
+
+    [Fact]
+    public async Task UsageLedgerEntryValidatesAndAggregatesByModelKindAndDay()
+    {
+        var root = Directory.CreateTempSubdirectory("quality-studio-usage-");
+        try
+        {
+            var timestamp = new DateTimeOffset(2026, 7, 21, 10, 0, 0, TimeSpan.Zero);
+            var entry = new ReviewUsageEntry("run-1", timestamp, "gpt-5", "codex",
+                new TokenUsage(100, 25, 40, 5, 1200), "code", "file", "src/a.ts");
+            await UsageLedger.AppendAsync(root.FullName, entry, TestContext.Current.CancellationToken);
+
+            var ledgerLine = Assert.Single(await File.ReadAllLinesAsync(UsageLedger.GetLedgerPath(root.FullName, timestamp), TestContext.Current.CancellationToken));
+            var schema = JsonSchema.FromText(File.ReadAllText(Path.Combine(FindRepositoryRoot(), "schemas", "usage-ledger.v1.schema.json")));
+            using var json = JsonDocument.Parse(ledgerLine);
+            var validation = schema.Evaluate(json.RootElement, new EvaluationOptions { OutputFormat = OutputFormat.List });
+            Assert.True(validation.IsValid, validation.ToString());
+
+            var report = await UsageLedger.QueryAsync(root.FullName, timestamp.AddMinutes(-1), "code", cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(1, report.Runs);
+            Assert.Equal(100, report.InputTokens);
+            Assert.Equal("gpt-5", Assert.Single(report.ByModel).Key);
+            Assert.Equal("code", Assert.Single(report.ByKind).Key);
+            Assert.Equal("2026-07-21", Assert.Single(report.ByDay).Key);
+        }
+        finally
+        {
+            root.Delete(true);
+        }
     }
 
     private static ReviewMetaDocument CreateDocument() => new()

@@ -317,4 +317,9 @@ internal sealed class QualityStudioEventSource : EventSource
     [Event(9, Level = EventLevel.Error)]
     public void SecurityScanUnavailable(string repositoryRoot, string mode, string errorType, string message) =>
         WriteEvent(9, repositoryRoot, mode, errorType, message);
+
+    [Event(10, Level = EventLevel.Informational)]
+    public void UsageRecorded(string runId, string path, string kind, long inputTokens, long outputTokens,
+        long cachedInputTokens, long durationMs) =>
+        WriteEvent(10, runId, path, kind, inputTokens, outputTokens, cachedInputTokens, durationMs);
 }

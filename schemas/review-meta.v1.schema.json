@@ -344,7 +344,23 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 200
+        },
+        "usage": {
+          "$ref": "#/$defs/tokenUsage"
         }
+      }
+    },
+    "tokenUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cliType", "inputTokens", "outputTokens", "cachedInputTokens", "reasoningOutputTokens", "durationMs"],
+      "properties": {
+        "cliType": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "cachedInputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "reasoningOutputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "durationMs": { "type": "integer", "minimum": 0 }
       }
     },
     "subjectInput": {

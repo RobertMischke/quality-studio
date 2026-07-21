@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using AgentOrchestrator.CodeQuality;
 using Microsoft.Extensions.Options;
+using CodingAgentRunner.Quota;
 
 namespace QualityStudio.Api;
 
@@ -26,7 +27,9 @@ public sealed record ReviewRunResponse(
     DateTimeOffset? StartedAt,
     DateTimeOffset? FinishedAt,
     IReadOnlyList<ReviewFileProgress> Files,
-    IReadOnlyList<string> Errors);
+    IReadOnlyList<string> Errors,
+    int UsageOperations,
+    TokenUsage Usage);
 
 public sealed class ReviewJobsOptions
 {
@@ -44,12 +47,15 @@ public sealed class ReviewJobService : BackgroundService
     private readonly RepositoryRegistry repositories;
     private readonly ReviewJobsOptions options;
     private readonly ILogger<ReviewJobService> logger;
+    private readonly QuotaService quotas;
 
-    public ReviewJobService(RepositoryRegistry repositories, IOptions<ReviewJobsOptions> options, ILogger<ReviewJobService> logger)
+    public ReviewJobService(RepositoryRegistry repositories, IOptions<ReviewJobsOptions> options,
+        ILogger<ReviewJobService> logger, QuotaService quotas)
     {
         this.repositories = repositories;
         this.options = options.Value;
         this.logger = logger;
+        this.quotas = quotas;
     }
 
     public ReviewRunResponse Enqueue(string repositoryId, StartReviewRequest request)
@@ -172,8 +178,10 @@ public sealed class ReviewJobService : BackgroundService
         }
     }
 
-    private static ReviewRunner CreateRunner(ReviewWorkItem item) =>
-        new(new CodingAgentReviewAgent(item.CliType, item.Model));
+    private ReviewRunner CreateRunner(ReviewWorkItem item) =>
+        new(new CodingAgentReviewAgent(item.CliType, item.Model,
+            eventObserver: (_, runEvent) => quotas.Observe(item.CliType, runEvent)),
+            usageRecorded: usage => item.AddUsage(usage.Tokens));
 
     private static ReviewRequest CreateRequest(ReviewWorkItem item, HierarchyNode node, ReviewLevel level, IReadOnlyList<string> files) =>
         new(node.Path, item.Kind, level,
@@ -209,6 +217,8 @@ public sealed class ReviewJobService : BackgroundService
         private readonly object gate = new();
         private readonly Dictionary<string, MutableFileProgress> progress;
         private readonly List<string> errors = [];
+        private TokenUsage usage = new(null, null, null, null, 0);
+        private int usageOperations;
 
         public ReviewWorkItem(string id, RepositoryRegistration repository, HierarchyNode node,
             IReadOnlyList<HierarchyNode> files, string kind, string? model, string cliType)
@@ -235,6 +245,7 @@ public sealed class ReviewJobService : BackgroundService
         public void Start() { lock (gate) { State = "running"; StartedAt = DateTimeOffset.UtcNow; } }
         public void StartFile(string path) { lock (gate) { progress[path].State = "running"; progress[path].StartedAt = DateTimeOffset.UtcNow; } }
         public void FinishFile(string path, string? error) { lock (gate) { var file = progress[path]; file.State = error is null ? "done" : "failed"; file.Error = error; file.FinishedAt = DateTimeOffset.UtcNow; if (error is not null) errors.Add($"{path}: {error}"); } }
+        public void AddUsage(TokenUsage operationUsage) { lock (gate) AddUsageCore(operationUsage); }
         public void CancelFile(string path) { lock (gate) { var file = progress[path]; file.State = "cancelled"; file.FinishedAt = DateTimeOffset.UtcNow; } }
         public void Complete() { lock (gate) { State = "done"; FinishedAt = DateTimeOffset.UtcNow; } }
         public void Fail(string error) { lock (gate) { State = "failed"; errors.Add(error); FinishedAt = DateTimeOffset.UtcNow; } }
@@ -247,9 +258,19 @@ public sealed class ReviewJobService : BackgroundService
                 var files = progress.Values.Select(file => new ReviewFileProgress(file.Path, file.State, file.StartedAt, file.FinishedAt, file.Error)).ToArray();
                 return new(Id, Repository.Id, Node.Path, Node.Level.ToString().ToLowerInvariant(), Kind, Model, CliType, State,
                     files.Length, files.Count(file => file.State is "done" or "failed"), files.Count(file => file.State == "failed"),
-                    CreatedAt, StartedAt, FinishedAt, files, errors.ToArray());
+                    CreatedAt, StartedAt, FinishedAt, files, errors.ToArray(), usageOperations, usage);
             }
         }
+
+        private void AddUsageCore(TokenUsage value)
+        {
+            usageOperations++;
+            usage = new TokenUsage(Add(usage.InputTokens, value.InputTokens), Add(usage.OutputTokens, value.OutputTokens),
+                Add(usage.CachedInputTokens, value.CachedInputTokens), Add(usage.ReasoningOutputTokens, value.ReasoningOutputTokens),
+                usage.DurationMs + value.DurationMs);
+        }
+
+        private static long? Add(long? left, long? right) => left.HasValue || right.HasValue ? (left ?? 0) + (right ?? 0) : null;
 
         private sealed class MutableFileProgress(string path)
         {

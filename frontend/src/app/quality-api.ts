@@ -21,7 +21,8 @@ export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export interface FindingPosition { line: number; column: number; }
 export interface FindingLocation { path: string; range?: { start: FindingPosition; end: FindingPosition }; }
 export interface ReviewFinding { id: string; aspect: string; severity: FindingSeverity; title: string; description: string; recommendation: string; evidence?: string; fingerprint?: string; ruleId?: string; accepted?: boolean; locations: FindingLocation[]; }
-export interface ReviewMetaDocument { reviewedAt: string; kind: ReviewKind; reviewer: { agent: string; model: string }; grade: { score: number; band: string; rationale: string }; summary: string; findings: ReviewFinding[]; }
+export interface TokenUsage { inputTokens: number | null; outputTokens: number | null; cachedInputTokens: number | null; reasoningOutputTokens: number | null; durationMs: number; }
+export interface ReviewMetaDocument { reviewedAt: string; kind: ReviewKind; reviewer: { agent: string; model: string; runId?: string; usage?: TokenUsage & { cliType: string } }; grade: { score: number; band: string; rationale: string }; summary: string; findings: ReviewFinding[]; }
 export type SecurityVerdict = 'pass' | 'warn' | 'block' | 'unavailable';
 export interface SecurityScanProvenance { scanner: string; version: string; mode: string; range: string | null; configPath: string | null; baselinePath: string | null; scannedAt: string; }
 export interface SecurityScanCounts { filesScanned: number; newFindings: number; acceptedFindings: number; blockFindings: number; warnFindings: number; cleanFiles: number; }
@@ -89,9 +90,17 @@ export interface ReviewFileProgress { path: string; state: ReviewRunState; start
 export interface ReviewRun {
   id: string; repositoryId: string; path: string; level: string; kind: ReviewKind; model: string | null; cliType: string;
   state: ReviewRunState; totalFiles: number; completedFiles: number; failedFiles: number; createdAt: string;
-  startedAt: string | null; finishedAt: string | null; files: ReviewFileProgress[]; errors: string[];
+  startedAt: string | null; finishedAt: string | null; files: ReviewFileProgress[]; errors: string[]; usageOperations: number; usage: TokenUsage;
 }
 export interface StartReviewRequest { path: string; kind: ReviewKind; model?: string | null; cliType?: string | null; }
+export interface UsageAggregate { key: string; runs: number; inputTokens: number; outputTokens: number; cachedInputTokens: number; reasoningOutputTokens: number; durationMs: number; }
+export interface UsageEntry { runId: string; timestamp: string; model: string; cliType: string; tokens: TokenUsage; kind: ReviewKind; level: string; path: string; }
+export interface UsageReport { generatedAt: string; runs: number; inputTokens: number; outputTokens: number; cachedInputTokens: number; reasoningOutputTokens: number; durationMs: number; byModel: UsageAggregate[]; byKind: UsageAggregate[]; byDay: UsageAggregate[]; recent: UsageEntry[]; }
+export interface QuotaWindow { label: string; usedPct: number | null; remainingPct: number | null; used: number | null; limit: number | null; unit: string | null; resetAt: string | null; resetLabel: string | null; }
+export interface QuotaProvider { provider: string; plan: string | null; fetchedAt: string; source: string | null; error: string | null; windows: QuotaWindow[]; }
+export interface QuotaReport { at: string; ttlSeconds: number; providers: QuotaProvider[]; }
+
+const emptyUsageReport = (): UsageReport => ({ generatedAt: '', runs: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningOutputTokens: 0, durationMs: 0, byModel: [], byKind: [], byDay: [], recent: [] });
 
 const demoFile = `using System.Diagnostics;
 using AgentOrchestrator.CodeQuality;
@@ -197,6 +206,8 @@ export class QualityApi {
   readonly selectedRepositoryId = signal('default');
   readonly selectedRepository = computed(() => this.repositories().find(repository => repository.id === this.selectedRepositoryId()) ?? null);
   readonly reviewRuns = signal<ReviewRun[]>([]);
+  readonly usage = signal<UsageReport>(emptyUsageReport());
+  readonly quotas = signal<QuotaReport>({ at: '', ttlSeconds: 0, providers: [] });
   readonly reviewError = signal('');
   private reviewPollTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -224,8 +235,10 @@ export class QualityApi {
     this.selectedRepositoryId.set(id);
     this.connectionState.set('connecting');
     this.file.set(null);
+    this.usage.set(emptyUsageReport());
     await this.loadTree();
     await this.loadReviewRuns();
+    await this.loadUsage();
     console.info(JSON.stringify({ event: 'qs.repository.selected', repositoryId: id }));
   }
 
@@ -296,10 +309,33 @@ export class QualityApi {
         const openPath = this.file()?.path;
         await this.loadTree();
         if (openPath) await this.loadFile(openPath);
+        await Promise.all([this.loadUsage(), this.loadQuotas()]);
       }
       if (result.runs.some(run => run.state === 'queued' || run.state === 'running')) this.scheduleReviewPoll();
     } catch (error) {
       this.reviewError.set(this.errorMessage(error));
+    }
+  }
+
+  async loadUsage(since?: string, kind?: ReviewKind): Promise<void> {
+    if (!this.connected()) return;
+    try {
+      const params: Record<string, string> = {};
+      if (since) params['since'] = since;
+      if (kind) params['kind'] = kind;
+      this.usage.set(await firstValueFrom(this.http.get<UsageReport>(`${this.repositoryApiBase()}/usage`, { params })));
+    } catch (error) {
+      this.usage.set(emptyUsageReport());
+      console.warn(JSON.stringify({ event: 'qs.usage.unavailable', reason: this.errorMessage(error) }));
+    }
+  }
+
+  async loadQuotas(): Promise<void> {
+    try {
+      this.quotas.set(await firstValueFrom(this.http.get<QuotaReport>('/api/quotas')));
+    } catch (error) {
+      this.quotas.set({ at: new Date().toISOString(), ttlSeconds: 0, providers: [] });
+      console.warn(JSON.stringify({ event: 'qs.quotas.unavailable', reason: this.errorMessage(error) }));
     }
   }
 

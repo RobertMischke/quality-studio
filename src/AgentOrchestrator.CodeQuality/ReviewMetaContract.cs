@@ -66,7 +66,8 @@ public sealed record ReviewerIdentity(
     [property: JsonPropertyOrder(0)] string Agent,
     [property: JsonPropertyOrder(1)] string Model,
     [property: JsonPropertyOrder(2), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AgentVersion = null,
-    [property: JsonPropertyOrder(3), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RunId = null);
+    [property: JsonPropertyOrder(3), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RunId = null,
+    [property: JsonPropertyOrder(4), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReviewerUsage? Usage = null);
 
 public sealed record ManifestHash(
     [property: JsonPropertyOrder(0)] string Algorithm,

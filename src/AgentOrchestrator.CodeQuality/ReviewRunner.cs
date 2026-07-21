@@ -23,7 +23,7 @@ public sealed record ReviewRequest(
 
 public sealed record ReviewSubjectFile(string UnitId, string Path);
 
-public sealed record ReviewResult(string MetaPath, string ReviewedHash, string RunId, ResolvedInputs Inputs);
+public sealed record ReviewResult(string MetaPath, string ReviewedHash, string RunId, ResolvedInputs Inputs, ReviewUsageEntry Usage);
 
 public sealed class ReviewRunner
 {
@@ -32,17 +32,20 @@ public sealed class ReviewRunner
     private readonly ReviewPromptBuilder _promptBuilder;
     private readonly ReviewResponseParser _responseParser;
     private readonly InputResolver _inputResolver;
+    private readonly Action<ReviewUsageEntry>? _usageRecorded;
 
     public ReviewRunner(
         IReviewAgent? agent = null,
         ReviewPromptBuilder? promptBuilder = null,
         ReviewResponseParser? responseParser = null,
-        InputResolver? inputResolver = null)
+        InputResolver? inputResolver = null,
+        Action<ReviewUsageEntry>? usageRecorded = null)
     {
         _agent = agent ?? new CodingAgentReviewAgent();
         _promptBuilder = promptBuilder ?? new ReviewPromptBuilder();
         _responseParser = responseParser ?? new ReviewResponseParser();
         _inputResolver = inputResolver ?? new InputResolver();
+        _usageRecorded = usageRecorded;
     }
 
     public async Task<ReviewResult> ReviewAsync(ReviewRequest request, CancellationToken cancellationToken = default)
@@ -80,11 +83,33 @@ public sealed class ReviewRunner
             fileContent);
         var unitId = request.UnitId ?? $"qs-v1/{GetAdapter(files[0])}/{request.Level.ToString().ToLowerInvariant()}/{Sha256($"{GetAdapter(files[0])}\0{relativePath}")}";
         var initialSubject = await PrepareSubjectAsync(root, relativePath, unitId, request, subjectPaths, files, cancellationToken).ConfigureAwait(false);
+        var startedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         QualityStudioEventSource.Log.ReviewStarted(relativePath, request.Kind, _agent.AgentName);
         try
         {
-            var agentResult = await _agent.RunAsync(prompt, root, cancellationToken).ConfigureAwait(false);
+            ReviewAgentResult agentResult;
+            try
+            {
+                agentResult = await _agent.RunAsync(prompt, root, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ReviewAgentRunCanceledException exception)
+            {
+                await RecordUsageAsync(root, CreateUsage(exception.RunId, exception.Usage, exception.EffectiveModel,
+                    startedAt, request, relativePath), relativePath, request.Kind).ConfigureAwait(false);
+                throw;
+            }
+            catch (ReviewAgentRunException exception)
+            {
+                await RecordUsageAsync(root, CreateUsage(exception.RunId, exception.Usage, exception.EffectiveModel,
+                    startedAt, request, relativePath), relativePath, request.Kind).ConfigureAwait(false);
+                throw;
+            }
+
+            var usage = CreateUsage(agentResult.RunId,
+                agentResult.Usage ?? new TokenUsage(null, null, null, null, stopwatch.ElapsedMilliseconds),
+                agentResult.EffectiveModel, startedAt, request, relativePath);
+            await RecordUsageAsync(root, usage, relativePath, request.Kind).ConfigureAwait(false);
             var response = _responseParser.Parse(agentResult.Response);
             var finalSubject = await PrepareSubjectAsync(root, relativePath, unitId, request, subjectPaths, files, cancellationToken).ConfigureAwait(false);
             if (!initialSubject.Inputs.SequenceEqual(finalSubject.Inputs))
@@ -107,7 +132,8 @@ public sealed class ReviewRunner
                 agentResult.RunId,
                 inputs,
                 request.Level,
-                request.DisplayName);
+                request.DisplayName,
+                usage);
             var metaPath = GetMetaPath(root, files[0], request.Kind, relativePath, request.Level);
             Directory.CreateDirectory(Path.GetDirectoryName(metaPath)!);
             var temporaryPath = metaPath + ".tmp-" + Guid.NewGuid().ToString("N");
@@ -118,13 +144,30 @@ public sealed class ReviewRunner
                 cancellationToken).ConfigureAwait(false);
             File.Move(temporaryPath, metaPath, true);
             QualityStudioEventSource.Log.ReviewCompleted(relativePath, request.Kind, agentResult.RunId, stopwatch.ElapsedMilliseconds);
-            return new ReviewResult(metaPath, reviewedHash, agentResult.RunId, inputs);
+            return new ReviewResult(metaPath, reviewedHash, agentResult.RunId, inputs, usage);
         }
         catch (Exception exception)
         {
             QualityStudioEventSource.Log.ReviewFailed(relativePath, request.Kind, exception.GetType().Name, exception.Message);
             throw;
         }
+    }
+
+    private ReviewUsageEntry CreateUsage(string runId, TokenUsage tokens, string? effectiveModel,
+        DateTimeOffset startedAt, ReviewRequest request, string relativePath) =>
+        new(runId, startedAt,
+            string.IsNullOrWhiteSpace(effectiveModel) ? (string.IsNullOrWhiteSpace(_agent.Model) ? "runner-default" : _agent.Model) : effectiveModel,
+            _agent.AgentName, tokens, request.Kind, request.Level.ToString().ToLowerInvariant(), relativePath);
+
+    private async Task RecordUsageAsync(string root, ReviewUsageEntry usage, string relativePath, string kind)
+    {
+        // The agent has already consumed the tokens; persist that fact even if the caller
+        // cancels while response validation or metadata writing is finishing.
+        await UsageLedger.AppendAsync(root, usage, CancellationToken.None).ConfigureAwait(false);
+        QualityStudioEventSource.Log.UsageRecorded(usage.RunId, relativePath, kind,
+            usage.Tokens.InputTokens ?? -1, usage.Tokens.OutputTokens ?? -1,
+            usage.Tokens.CachedInputTokens ?? -1, usage.Tokens.DurationMs);
+        _usageRecorded?.Invoke(usage);
     }
 
     private JsonObject CreateMeta(
@@ -140,15 +183,25 @@ public sealed class ReviewRunner
         string runId,
         ResolvedInputs inputs,
         ReviewLevel level,
-        string? displayName)
+        string? displayName,
+        ReviewUsageEntry usage)
     {
         var promptHash = "sha256:" + Sha256(prompt);
         var effectiveHash = Sha256($"quality-studio-review-inputs-v1\0{kind}\0{promptHash}");
         var reviewer = new JsonObject
         {
             ["agent"] = _agent.AgentName,
-            ["model"] = string.IsNullOrWhiteSpace(_agent.Model) ? "runner-default" : _agent.Model,
+            ["model"] = usage.Model,
             ["runId"] = runId,
+            ["usage"] = new JsonObject
+            {
+                ["cliType"] = usage.CliType,
+                ["inputTokens"] = usage.Tokens.InputTokens,
+                ["outputTokens"] = usage.Tokens.OutputTokens,
+                ["cachedInputTokens"] = usage.Tokens.CachedInputTokens,
+                ["reasoningOutputTokens"] = usage.Tokens.ReasoningOutputTokens,
+                ["durationMs"] = usage.Tokens.DurationMs,
+            },
         };
 
         var meta = new JsonObject

@@ -1,8 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Editor } from './editor/editor';
 import { Explorer } from './explorer/explorer';
-import { AgentStudioImportResponse, QualityApi, RepositoryRegistration, RepositoryRegistrationRequest, ReviewFinding, ReviewKind } from './quality-api';
+import { AgentStudioImportResponse, QualityApi, QuotaProvider, RepositoryRegistration, RepositoryRegistrationRequest, ReviewFinding, ReviewKind } from './quality-api';
 import { ReviewPanel } from './review-panel/review-panel';
 import { flattenTree } from './tree-utils';
 
@@ -38,7 +38,7 @@ type ResizablePane = 'explorer' | 'review';
     '(window:pointercancel)': 'onDragEnd()',
   },
 })
-export class App {
+export class App implements OnDestroy {
   readonly api = inject(QualityApi);
   readonly explorer = viewChild(Explorer);
   readonly embedded = signal(this.detectEmbedded());
@@ -78,6 +78,7 @@ export class App {
   private dragStartWidth = 0;
   private dragFrame: number | null = null;
   private pendingClientX = 0;
+  private readonly quotaRefreshTimer: ReturnType<typeof setInterval>;
 
   constructor() {
     effect(() => document.documentElement.dataset['theme'] = this.theme());
@@ -105,6 +106,7 @@ export class App {
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
     });
     void this.initialize();
+    this.quotaRefreshTimer = setInterval(() => void this.api.loadQuotas(), 60_000);
   }
 
   private async initialize(): Promise<void> {
@@ -112,8 +114,31 @@ export class App {
     await this.api.loadRepositories(preferredRepository);
     await this.api.loadTree();
     await this.api.loadReviewRuns();
+    await Promise.all([this.api.loadUsage(), this.api.loadQuotas()]);
+    if (!this.api.quotas().providers.length) setTimeout(() => void this.api.loadQuotas(), 2_000);
     const path = this.selectionPathOrFirst(this.selected());
     if (path) this.open(path, false);
+  }
+
+  ngOnDestroy(): void { clearInterval(this.quotaRefreshTimer); }
+
+  quotaRemaining(provider: QuotaProvider): number | null {
+    const values = provider.windows.map(window => window.remainingPct).filter((value): value is number => value !== null);
+    return values.length ? Math.min(...values) : null;
+  }
+
+  quotaRemainingLabel(provider: QuotaProvider): string {
+    const remaining = this.quotaRemaining(provider);
+    return remaining === null ? 'unavailable' : `${Math.round(remaining)}%`;
+  }
+
+  quotaTooltip(provider: QuotaProvider): string {
+    if (!provider.windows.length) return `${provider.provider}: ${provider.error || 'quota unavailable'}`;
+    const plan = provider.plan ? ` (${provider.plan})` : '';
+    return `${provider.provider}${plan}\n${provider.windows.map(window => {
+      const reset = window.resetLabel || (window.resetAt ? `resets ${new Date(window.resetAt).toLocaleString()}` : '');
+      return `${window.label}: ${window.remainingPct === null ? 'unavailable' : Math.round(window.remainingPct) + '% remaining'}${reset ? ` · ${reset}` : ''}`;
+    }).join('\n')}`;
   }
 
   open(path: string, track = true, expandContainer = false): void {

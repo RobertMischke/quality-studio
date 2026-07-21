@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using QualityStudio.Api;
+using CodingAgentRunner.Quota;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
@@ -29,6 +30,9 @@ builder.Services.AddSingleton<AgentStudioTaskClient>();
 builder.Services.Configure<ReviewJobsOptions>(builder.Configuration.GetSection(ReviewJobsOptions.SectionName));
 builder.Services.AddSingleton<ReviewJobService>();
 builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<ReviewJobService>());
+builder.Services.AddSingleton(_ => new QuotaService(
+    probes: [new ClaudeOAuthUsageProbe(), new CodexSessionLogProbe()],
+    store: FileQuotaCacheStore.Global()));
 var corsOptions = builder.Configuration.GetSection(RepositoryOptions.SectionName).Get<RepositoryOptions>()
     ?? new RepositoryOptions();
 builder.Services.AddCors(options => options.AddPolicy("dev-frontend", policy =>
@@ -89,6 +93,9 @@ app.MapGet("/api/scan", Scan);
 app.MapGet("/api/repos/{repoId}/scan", Scan);
 app.MapGet("/api/security/scan", SecurityScan);
 app.MapGet("/api/repos/{repoId}/security/scan", SecurityScan);
+app.MapGet("/api/usage", Usage);
+app.MapGet("/api/repos/{repoId}/usage", Usage);
+app.MapGet("/api/quotas", Quotas);
 
 app.MapPost("/api/review", StartReview);
 app.MapPost("/api/repos/{repoId}/review", StartReview);
@@ -221,6 +228,51 @@ static async Task<IResult> SecurityScan(HttpContext context, RepositoryRegistry 
         "Scanned repository {RepositoryId} for secrets with verdict {Verdict} in {ElapsedMilliseconds} ms",
         registration.Id, result.Report.Verdict.ToString().ToLowerInvariant(), stopwatch.ElapsedMilliseconds);
     return Results.Ok(Map(result));
+}
+
+static async Task<IResult> Usage(HttpContext context, DateTimeOffset? since, string? kind,
+    RepositoryRegistry registry, ILogger<Program> logger, CancellationToken cancellationToken)
+{
+    var stopwatch = Stopwatch.StartNew();
+    var (registration, repository) = ResolveRepository(context, registry);
+    var report = await UsageLedger.QueryAsync(repository.Root, since, kind, cancellationToken: cancellationToken);
+    logger.LogInformation(new EventId(1400, "UsageLoaded"),
+        "Loaded {UsageRunCount} usage entries for repository {RepositoryId} in {ElapsedMilliseconds} ms",
+        report.Runs, registration.Id, stopwatch.ElapsedMilliseconds);
+    return Results.Ok(report);
+}
+
+static IResult Quotas(QuotaService quotas, ILogger<Program> logger, CancellationToken cancellationToken)
+{
+    var stopwatch = Stopwatch.StartNew();
+    var report = quotas.GetWithBackgroundRefresh(cancellationToken);
+    logger.LogInformation(new EventId(1401, "QuotasLoaded"),
+        "Loaded {QuotaProviderCount} quota providers in {ElapsedMilliseconds} ms",
+        report.Snapshots.Count, stopwatch.ElapsedMilliseconds);
+    return Results.Ok(new
+    {
+        report.At,
+        report.TtlSeconds,
+        Providers = report.Snapshots.Select(snapshot => new
+        {
+            Provider = snapshot.CliType,
+            snapshot.Plan,
+            snapshot.FetchedAt,
+            snapshot.Source,
+            snapshot.Error,
+            Windows = snapshot.Windows.Select(window => new
+            {
+                window.Label,
+                window.UsedPct,
+                RemainingPct = window.UsedPct.HasValue ? (double?)Math.Max(0d, 100d - window.UsedPct.Value) : null,
+                window.Used,
+                window.Limit,
+                window.Unit,
+                window.ResetAt,
+                window.ResetLabel,
+            }),
+        }),
+    });
 }
 
 static IResult StartReview(HttpContext context, StartReviewRequest request, RepositoryRegistry registry, ReviewJobService jobs)

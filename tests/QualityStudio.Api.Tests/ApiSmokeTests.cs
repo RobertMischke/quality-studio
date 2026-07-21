@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using AgentOrchestrator.CodeQuality;
+using CodingAgentRunner.Quota;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 namespace QualityStudio.Api.Tests;
@@ -109,6 +111,37 @@ public sealed class ApiSmokeTests : IAsyncLifetime
         var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
         Assert.Equal("ok", json.GetProperty("status").GetString());
         Assert.Equal("QualityStudio.Api", json.GetProperty("service").GetString());
+    }
+
+    [Fact]
+    public async Task Usage_returns_filtered_ledger_aggregates_and_recent_entries()
+    {
+        var timestamp = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await UsageLedger.AppendAsync(repositoryRoot, new ReviewUsageEntry("usage-api-run", timestamp, "gpt-5", "codex",
+            new TokenUsage(200, 50, 80, 10, 2400), "performance", "file", "Sample.cs"), TestContext.Current.CancellationToken);
+
+        using var client = application!.CreateClient();
+        var since = Uri.EscapeDataString(timestamp.AddMinutes(-1).ToString("O"));
+        using var response = await client.GetAsync($"/api/usage?since={since}&kind=performance", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal(1, json.GetProperty("runs").GetInt32());
+        Assert.Equal(200, json.GetProperty("inputTokens").GetInt64());
+        Assert.Equal("gpt-5", Assert.Single(json.GetProperty("byModel").EnumerateArray()).GetProperty("key").GetString());
+        Assert.Equal("usage-api-run", Assert.Single(json.GetProperty("recent").EnumerateArray()).GetProperty("runId").GetString());
+    }
+
+    [Fact]
+    public async Task Quotas_returns_a_clean_empty_report_when_no_provider_data_is_available()
+    {
+        using var client = application!.CreateClient();
+        using var response = await client.GetAsync("/api/quotas", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Empty(json.GetProperty("providers").EnumerateArray());
+        Assert.True(json.GetProperty("ttlSeconds").GetInt32() > 0);
     }
 
     [Fact]
@@ -278,6 +311,8 @@ public sealed class ApiSmokeTests : IAsyncLifetime
                 }));
             builder.ConfigureServices(services =>
             {
+                services.RemoveAll<QuotaService>();
+                services.AddSingleton(new QuotaService([]));
                 services.AddSingleton<GitleaksSecurityScanner, FakeSecurityScanner>();
             });
         }
