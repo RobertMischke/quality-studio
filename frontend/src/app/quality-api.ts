@@ -36,7 +36,9 @@ export interface SecurityScanResponse {
   counts: SecurityScanCounts;
   findings: SecurityScanFinding[];
 }
-export interface FileDocument { path: string; content: string; metaDocuments: ReviewMetaDocument[]; }
+export type LineEnding = 'lf' | 'crlf' | 'mixed';
+export type FileEncoding = 'utf-8' | 'utf-8-bom' | 'other';
+export interface FileDocument { path: string; content: string; metaDocuments: ReviewMetaDocument[]; sizeBytes: number; lineEnding: LineEnding; encoding: FileEncoding; }
 export interface ScanReport { files: unknown[]; freshCount: number; staleCount: number; missingCount: number; }
 export interface HandoverRequest { findingSummary: string; filePath: string; findingText: string; reviewKind: string; metaReference: string; }
 export interface HandoverResult { dryRun: boolean; taskId: string | null; card: { title: string }; }
@@ -86,6 +88,7 @@ app.MapGet("/api/file", async (string path) =>
 });
 
 app.Run();`;
+const demoFileSizeBytes = new TextEncoder().encode(demoFile).length;
 
 const state = (overall: ReviewState, score: number | null, band: string | null): KindState => ({ direct: overall, descendants: overall, overall, score, band, metaPath: score === null ? null : 'preview.review-meta.json' });
 const kind = (code: ReviewState): Record<string, KindState> => ({
@@ -234,7 +237,7 @@ export class QualityApi {
       const file = await firstValueFrom(this.http.get<FileDocument>(`${this.repositoryApiBase()}/file`, { params: { path } }));
       this.file.set(file); this.connectionState.set('live');
     } catch (error) {
-      this.file.set({ path, content: demoFile, metaDocuments: demoMeta });
+      this.file.set({ path, content: demoFile, metaDocuments: demoMeta, sizeBytes: demoFileSizeBytes, lineEnding: 'lf', encoding: 'utf-8' });
       if (this.connectionState() !== 'live') this.connectionState.set('preview');
       console.warn(JSON.stringify({ event: 'qs.data.file-demo-fallback', path, reason: error instanceof Error ? error.message : 'API unavailable' }));
     } finally { this.loading.set(false); }

@@ -1,7 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
-import { formatDateTime } from '../format';
+import { formatBytes, formatDateTime } from '../format';
+import { languageForPath } from '../language';
 import { FindingSeverity, QualityApi, ReviewFinding, ReviewKind } from '../quality-api';
 import { FlatNode } from '../tree-utils';
+
+const LINE_ENDING_LABELS: Record<string, string> = { lf: 'LF', crlf: 'CRLF', mixed: 'Mixed' };
+const ENCODING_LABELS: Record<string, string> = { 'utf-8': 'UTF-8', 'utf-8-bom': 'UTF-8 BOM', other: 'Unknown encoding' };
 
 @Component({
   selector: 'qs-editor',
@@ -39,6 +43,16 @@ export class Editor {
     const markers = this.findingsByLine();
     return this.codeLines().slice(start, start + count).map((text, i) => ({ text, number: start + i + 1, top: (start + i) * this.lineHeight, findings: markers.get(start + i + 1) ?? [] }));
   });
+  readonly topVisibleLine = computed(() => Math.floor(this.codeScrollTop() / this.lineHeight) + 1);
+  readonly pathParts = computed(() => {
+    const path = this.api.file()?.path ?? '';
+    const slash = path.lastIndexOf('/');
+    return slash === -1 ? { directory: '', name: path } : { directory: path.slice(0, slash + 1), name: path.slice(slash + 1) };
+  });
+  readonly language = computed(() => languageForPath(this.api.file()?.path));
+  readonly fileSizeLabel = computed(() => formatBytes(this.api.file()?.sizeBytes ?? 0));
+  readonly lineEndingLabel = computed(() => LINE_ENDING_LABELS[this.api.file()?.lineEnding ?? 'lf']);
+  readonly encodingLabel = computed(() => ENCODING_LABELS[this.api.file()?.encoding ?? 'utf-8']);
 
   constructor() {
     effect(() => { this.selectedPath(); this.codeScrollTop.set(0); });

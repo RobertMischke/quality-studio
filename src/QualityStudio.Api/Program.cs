@@ -2,6 +2,7 @@ using System.Diagnostics;
 using AgentOrchestrator.CodeQuality;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using QualityStudio.Api;
@@ -127,11 +128,44 @@ static async Task<IResult> FileContent(HttpContext context, string? path, Reposi
     var (registration, repository) = ResolveRepository(context, registry);
     var relative = repository.NormalizeRelativePath(path);
     var absolute = repository.ResolveFile(relative);
-    var content = await File.ReadAllTextAsync(absolute, cancellationToken);
+    var bytes = await File.ReadAllBytesAsync(absolute, cancellationToken);
+    var (encoding, content) = DecodeFileContent(bytes);
+    var lineEnding = DetectLineEnding(content);
     logger.LogInformation(new EventId(1101, "FileLoaded"),
-        "Loaded {FilePath} from repository {RepositoryId} in {ElapsedMilliseconds} ms",
-        relative, registration.Id, stopwatch.ElapsedMilliseconds);
-    return Results.Ok(new FileResponse(relative, content, repository.ReadMetaDocuments(relative)));
+        "Loaded {FilePath} from repository {RepositoryId} ({SizeBytes} bytes, {Encoding}, {LineEnding}) in {ElapsedMilliseconds} ms",
+        relative, registration.Id, bytes.LongLength, encoding, lineEnding, stopwatch.ElapsedMilliseconds);
+    return Results.Ok(new FileResponse(relative, content, repository.ReadMetaDocuments(relative), bytes.LongLength, lineEnding, encoding));
+}
+
+static (string Encoding, string Content) DecodeFileContent(byte[] bytes)
+{
+    if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+    {
+        return ("utf-8-bom", Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3));
+    }
+
+    try
+    {
+        var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        return ("utf-8", strictUtf8.GetString(bytes));
+    }
+    catch (DecoderFallbackException)
+    {
+        return ("other", Encoding.UTF8.GetString(bytes));
+    }
+}
+
+static string DetectLineEnding(string content)
+{
+    var sawCrlf = false;
+    var sawLoneLf = false;
+    for (var i = 0; i < content.Length; i++)
+    {
+        if (content[i] != '\n') continue;
+        if (i > 0 && content[i - 1] == '\r') sawCrlf = true; else sawLoneLf = true;
+    }
+
+    return sawCrlf && sawLoneLf ? "mixed" : sawCrlf ? "crlf" : "lf";
 }
 
 static IResult Inputs(HttpContext context, RepositoryRegistry registry, InputResolver resolver, ILogger<Program> logger)

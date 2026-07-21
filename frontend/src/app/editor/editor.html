@@ -20,5 +20,22 @@
       }
     </div>
   </div>
-  <div class="statusbar"><span>Ln 1, Col 1</span><span>UTF-8</span><span>LF</span><span>C#</span></div>
+  <div class="statusbar">
+    @if (api.file(); as file) {
+      <span class="statusbar-path" [title]="file.path"><span class="statusbar-path-dir">{{ pathParts().directory }}</span><span class="statusbar-path-name">{{ pathParts().name }}</span></span>
+      <div class="statusbar-meta">
+        <span>Ln {{ topVisibleLine() }}</span>
+        <span>{{ codeLines().length }} lines</span>
+        <span>{{ fileSizeLabel() }}</span>
+        <span>{{ language() }}</span>
+        <span>{{ encodingLabel() }}</span>
+        <span>{{ lineEndingLabel() }}</span>
+        @if (activeMeta(); as meta) {
+          <span class="statusbar-review"><i class="status" [class]="'status ' + activeState()"></i>{{ activeKind() }} {{ meta.grade.band }} · {{ reviewed(meta.reviewedAt) }}</span>
+        }
+      </div>
+    } @else {
+      <span class="statusbar-empty">No file open</span>
+    }
+  </div>
 </section>

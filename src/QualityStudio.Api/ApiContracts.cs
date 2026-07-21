@@ -63,7 +63,13 @@ public sealed record KindStateResponse(
     };
 }
 
-public sealed record FileResponse(string Path, string Content, IReadOnlyList<JsonElement> MetaDocuments);
+public sealed record FileResponse(
+    string Path,
+    string Content,
+    IReadOnlyList<JsonElement> MetaDocuments,
+    long SizeBytes,
+    string LineEnding,
+    string Encoding);
 
 public sealed record HandoverConfigurationResponse(bool TargetConfigured, bool DryRun, string? Project);
 
