@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using AgentOrchestrator.CodeQuality;
 using CodingAgentRunner.Quota;
+using ModelPriceCatalog = CodingAgentRunner.Pricing.ModelPriceCatalog;
 using Microsoft.Extensions.Options;
 
 namespace QualityStudio.Api;
@@ -66,6 +67,7 @@ public sealed class ReviewJobService : BackgroundService
         var stopwatch = Stopwatch.StartNew();
         if (string.IsNullOrWhiteSpace(request.Path)) throw new ArgumentException("A hierarchy path is required.");
         if (!Kinds.Contains(request.Kind)) throw new ArgumentException("Kind must be code, security, or performance.");
+        ValidateModel(request.Model);
         var registration = repositories.Get(repositoryId);
         if (!registration.EnabledReviewKinds.Contains(request.Kind, StringComparer.Ordinal))
             throw new ArgumentException($"Review kind '{request.Kind}' is not enabled for this repository.");
@@ -295,6 +297,16 @@ public sealed class ReviewJobService : BackgroundService
         new(new CodingAgentReviewAgent(item.CliType, item.Model,
                 eventObserver: (_, runEvent) => quotas.Observe(item.CliType, runEvent)),
             usageRecorded: usage => item.AddUsage(usage.Tokens));
+
+    private static void ValidateModel(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return;
+        var requested = model.Trim();
+        var known = ModelPriceCatalog.Default.Listings.Any(listing =>
+            string.Equals(listing.ModelId, requested, StringComparison.OrdinalIgnoreCase) ||
+            listing.Aliases.Contains(requested, StringComparer.OrdinalIgnoreCase));
+        if (!known) throw new ArgumentException("Model must be present in the coding-agent runner catalogue.");
+    }
 
     private static ReviewRequest CreateRequest(
         ReviewWorkItem item,

@@ -155,6 +155,7 @@ public sealed class AgentStudioImportTests : IAsyncLifetime
                 new Dictionary<string, string?>
                 {
                     ["QualityStudio:RepositoryRoot"] = root,
+                    ["QualityStudio:AllowedRoots:0"] = Path.GetTempPath(),
                     ["AgentStudio:BaseUrl"] = "http://agent-studio.test",
                 }));
             builder.ConfigureServices(services => services.AddSingleton(_ => new HttpClient(handler)));

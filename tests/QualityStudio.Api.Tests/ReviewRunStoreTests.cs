@@ -262,6 +262,7 @@ public sealed class ReviewRunStoreTests
                 new Dictionary<string, string?>
                 {
                     ["QualityStudio:RepositoryRoot"] = repositoryRoot,
+                    ["QualityStudio:AllowedRoots:0"] = repositoryRoot,
                 }));
             builder.ConfigureServices(services =>
             {

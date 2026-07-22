@@ -25,6 +25,7 @@ public static partial class RepositoryHierarchyBuilder
         var root = Path.GetFullPath(repositoryPath);
         var solutions = Directory.EnumerateFiles(root, "*.sln", SearchOption.TopDirectoryOnly)
             .Concat(Directory.EnumerateFiles(root, "*.slnx", SearchOption.TopDirectoryOnly))
+            .Where(path => !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
@@ -126,14 +127,15 @@ public static partial class RepositoryHierarchyBuilder
             return XDocument.Load(solution).Descendants("Project")
                 .Select(element => element.Attribute("Path")?.Value)
                 .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Select(path => Path.GetFullPath(path!, Path.GetDirectoryName(solution)!));
+                .Select(path => Path.GetFullPath(path!, Path.GetDirectoryName(solution)!))
+                .Where(path => IsContained(root, path));
         }
 
         return File.ReadLines(solution)
             .Select(line => SlnProjectRegex().Match(line))
             .Where(match => match.Success)
             .Select(match => Path.GetFullPath(match.Groups[1].Value.Replace('\\', Path.DirectorySeparatorChar), Path.GetDirectoryName(solution)!))
-            .Where(path => path.StartsWith(root, StringComparison.OrdinalIgnoreCase));
+            .Where(path => IsContained(root, path));
     }
 
     private static IEnumerable<string> FindProjectFiles(string root) =>
@@ -155,6 +157,23 @@ public static partial class RepositoryHierarchyBuilder
 
     private static string Relative(string root, string path) =>
         Path.GetRelativePath(root, path).Replace('\\', '/');
+
+    private static bool IsContained(string root, string path)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!normalizedPath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, comparison)) return false;
+        var current = normalizedRoot;
+        foreach (var segment in Path.GetRelativePath(normalizedRoot, normalizedPath).Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if ((File.Exists(current) || Directory.Exists(current)) &&
+                File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint)) return false;
+        }
+        return true;
+    }
 
     private static string Id(ReviewLevel level, string[] tuple)
     {

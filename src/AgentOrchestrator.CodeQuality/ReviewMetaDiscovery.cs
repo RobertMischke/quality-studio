@@ -76,7 +76,7 @@ public static class ReviewMetaDiscovery
             }
 
             var path = Path.GetFullPath(input.GetProperty("path").GetString()!, root);
-            if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+            if (!IsConfinedFile(root, path))
             {
                 return true;
             }
@@ -95,6 +95,23 @@ public static class ReviewMetaDiscovery
     {
         var text = File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         return "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+    }
+
+    private static bool IsConfinedFile(string root, string path)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedPath = Path.GetFullPath(path);
+        if (!normalizedPath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, comparison) || !File.Exists(normalizedPath))
+            return false;
+        var current = normalizedRoot;
+        foreach (var segment in Path.GetRelativePath(normalizedRoot, normalizedPath).Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint)) return false;
+        }
+        return true;
     }
 
     private static IEnumerable<HierarchyNode> Flatten(IEnumerable<HierarchyNode> roots)

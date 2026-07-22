@@ -51,9 +51,11 @@ public sealed class InputResolver
 
         var normalizedKind = kind.ToLowerInvariant();
         var normalizedLevel = level.ToString().ToLowerInvariant();
-        var global = ReadDirectory(globalInputsDirectory, "global", normalizedKind, normalizedLevel);
-        var projectDirectory = Path.Combine(Path.GetFullPath(repositoryRoot), ".quality", "inputs");
-        var project = ReadDirectory(projectDirectory, "project", normalizedKind, normalizedLevel);
+        var global = ReadDirectory(globalInputsDirectory, "global", normalizedKind, normalizedLevel,
+            globalInputsDirectory);
+        var projectRoot = Path.GetFullPath(repositoryRoot);
+        var projectDirectory = Path.Combine(projectRoot, ".quality", "inputs");
+        var project = ReadDirectory(projectDirectory, "project", normalizedKind, normalizedLevel, projectRoot);
         var projectIds = project.Select(input => input.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var omissions = global
             .Where(input => projectIds.Contains(input.Id))
@@ -82,16 +84,38 @@ public sealed class InputResolver
     }
 
     private static IReadOnlyList<ReviewInput> ReadDirectory(
-        string? directory, string scope, string kind, string level)
+        string? directory, string scope, string kind, string level, string? confinementRoot)
     {
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return [];
+        RejectReparseTraversal(Path.GetFullPath(confinementRoot ?? directory), Path.GetFullPath(directory));
         return Directory.EnumerateFiles(directory, "*.md", SearchOption.TopDirectoryOnly)
+            .Where(path => !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
             .Select(path => Parse(path, scope))
             .Where(input => Applies(input.Kinds, kind) && Applies(input.Levels, level))
             .OrderByDescending(input => input.Priority)
             .ThenBy(input => input.Id, StringComparer.Ordinal)
             .ThenBy(input => input.Source, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static void RejectReparseTraversal(string root, string path)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        path = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!string.Equals(root, path, comparison) &&
+            !path.StartsWith(root + Path.DirectorySeparatorChar, comparison))
+            throw new ArgumentException("Review input directory escapes its configured root.");
+        var current = root;
+        if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+            throw new ArgumentException("Review input directories cannot traverse symbolic links or junctions.");
+        foreach (var segment in Path.GetRelativePath(root, path).Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                throw new ArgumentException("Review input directories cannot traverse symbolic links or junctions.");
+        }
     }
 
     private static ReviewInput Parse(string path, string scope)

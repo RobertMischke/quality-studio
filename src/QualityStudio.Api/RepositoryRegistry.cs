@@ -29,15 +29,29 @@ public sealed class RepositoryRegistry
     private readonly string registryPath;
     private readonly string contentRoot;
     private readonly RepositoryOptions legacyOptions;
+    private readonly string[] allowedRoots;
     private readonly ILogger<RepositoryRegistry> logger;
+    private readonly ReviewMetaIndex metaIndex;
     private readonly SemaphoreSlim gate = new(1, 1);
     private List<RepositoryRegistration> entries;
 
-    public RepositoryRegistry(IHostEnvironment environment, IOptions<RepositoryOptions> options, ILogger<RepositoryRegistry> logger)
+    public RepositoryRegistry(IHostEnvironment environment, IOptions<RepositoryOptions> options,
+        ILogger<RepositoryRegistry> logger, ReviewMetaIndex metaIndex)
     {
         contentRoot = environment.ContentRootPath;
         legacyOptions = options.Value;
         this.logger = logger;
+        this.metaIndex = metaIndex;
+        if (legacyOptions.AllowedRoots.Length == 0)
+            throw new InvalidOperationException("QualityStudio:AllowedRoots must contain at least one directory.");
+        allowedRoots = legacyOptions.AllowedRoots.Select(path => ResolvePath(path, contentRoot))
+            .Distinct(PathComparer).ToArray();
+        foreach (var allowedRoot in allowedRoots)
+        {
+            if (!Directory.Exists(allowedRoot))
+                throw new InvalidOperationException("A configured repository allowed root does not exist.");
+            PathConfinement.RejectReparseTraversal(allowedRoot, allowedRoot);
+        }
         registryPath = Path.Combine(contentRoot, RelativeRegistryPath.Replace('/', Path.DirectorySeparatorChar));
         entries = LoadOrSeed();
     }
@@ -59,7 +73,7 @@ public sealed class RepositoryRegistry
                ?? throw new KeyNotFoundException($"Repository '{resolvedId}' was not found.");
     }
 
-    public RepositoryAccess Access(string? id) => new(Get(id).RootPath);
+    public RepositoryAccess Access(string? id) => new(Get(id).RootPath, metaIndex);
 
     public async Task<RepositoryRegistration> CreateAsync(RepositoryRegistrationRequest request, CancellationToken cancellationToken)
     {
@@ -150,6 +164,7 @@ public sealed class RepositoryRegistry
                 var loaded = JsonSerializer.Deserialize<List<RepositoryRegistration>>(File.ReadAllText(registryPath), JsonOptions());
                 if (loaded is { Count: > 0 })
                 {
+                    foreach (var entry in loaded) ValidatePersistedEntry(entry);
                     return loaded;
                 }
             }
@@ -160,12 +175,13 @@ public sealed class RepositoryRegistry
         }
 
         var root = ResolvePath(legacyOptions.RepositoryRoot, contentRoot);
+        EnsureAllowedDirectory(root, "Configured repository root is outside the allowed roots.");
         var displayName = new DirectoryInfo(root).Name;
         var seeded = new RepositoryRegistration(
             DefaultRepositoryId,
             string.IsNullOrWhiteSpace(displayName) ? "Default repository" : displayName,
             root,
-            NormalizeOptionalPath(legacyOptions.GlobalInputsDirectory, root),
+            ValidateOptionalDirectory(legacyOptions.GlobalInputsDirectory, root),
             legacyOptions.InputBudgetCharacters,
             SupportedKinds);
         var result = new List<RepositoryRegistration> { seeded };
@@ -199,12 +215,17 @@ public sealed class RepositoryRegistry
         var root = ResolvePath(request.RootPath, contentRoot);
         if (!Directory.Exists(root))
         {
-            throw new RepositoryRegistryValidationException($"Repository path does not exist or is not a directory: {root}");
+            throw new RepositoryRegistryValidationException(
+                $"Repository path does not exist or is not a directory: {root}",
+                "Repository path does not exist");
         }
+
+        EnsureAllowedDirectory(root, "Repository path is outside the configured allowed roots.");
 
         if (!Directory.Exists(Path.Combine(root, ".git")) && !File.Exists(Path.Combine(root, ".git")))
         {
-            throw new RepositoryRegistryValidationException($"Path is not a Git repository: {root}");
+            throw new RepositoryRegistryValidationException($"Path is not a Git repository: {root}",
+                "Repository path is not a Git repository");
         }
 
         var budget = request.InputBudgetCharacters ?? InputResolver.DefaultBudgetCharacters;
@@ -221,7 +242,7 @@ public sealed class RepositoryRegistry
         }
 
         return new RepositoryRegistration(id, request.DisplayName.Trim(), root,
-            NormalizeOptionalPath(request.GlobalInputsDirectory, root), budget, kinds);
+            ValidateOptionalDirectory(request.GlobalInputsDirectory, root), budget, kinds);
     }
 
     private async Task PersistAsync(CancellationToken cancellationToken)
@@ -235,8 +256,50 @@ public sealed class RepositoryRegistry
     private static string ResolvePath(string path, string relativeTo) => Path.GetFullPath(
         Path.IsPathRooted(path) ? path : Path.Combine(relativeTo, path));
 
-    private static string? NormalizeOptionalPath(string? path, string relativeTo) =>
-        string.IsNullOrWhiteSpace(path) ? null : ResolvePath(path, relativeTo);
+    private string? ValidateOptionalDirectory(string? path, string relativeTo)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var resolved = ResolvePath(path, relativeTo);
+        if (!Directory.Exists(resolved))
+            throw new RepositoryRegistryValidationException(
+                $"Global inputs directory does not exist or is not a directory: {resolved}",
+                "Global inputs directory does not exist");
+        EnsureAllowedDirectory(resolved, "Global inputs directory is outside the configured allowed roots.");
+        return resolved;
+    }
+
+    private void ValidatePersistedEntry(RepositoryRegistration entry)
+    {
+        if (!Directory.Exists(entry.RootPath))
+            throw new InvalidOperationException("A registered repository is unavailable.");
+        EnsureAllowedDirectory(entry.RootPath, "A registered repository is outside the configured allowed roots.");
+        if (entry.GlobalInputsDirectory is not null)
+        {
+            if (!Directory.Exists(entry.GlobalInputsDirectory))
+                throw new InvalidOperationException("A registered global inputs directory is unavailable.");
+            EnsureAllowedDirectory(entry.GlobalInputsDirectory,
+                "A registered global inputs directory is outside the configured allowed roots.");
+        }
+    }
+
+    private void EnsureAllowedDirectory(string path, string internalMessage)
+    {
+        var allowedRoot = allowedRoots.FirstOrDefault(root => PathConfinement.IsWithin(root, path));
+        if (allowedRoot is null)
+            throw new RepositoryRegistryValidationException(internalMessage,
+                internalMessage.Contains("inputs", StringComparison.OrdinalIgnoreCase)
+                    ? "Global inputs directory is outside the allowed roots"
+                    : "Repository path is outside the allowed roots");
+        try
+        {
+            PathConfinement.RejectReparseTraversal(allowedRoot, path);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new RepositoryRegistryValidationException(internalMessage,
+                "Configured path traverses a symbolic link or junction", exception);
+        }
+    }
 
     private static string Slugify(string value)
     {
@@ -248,6 +311,15 @@ public sealed class RepositoryRegistry
     }
 
     private static JsonSerializerOptions JsonOptions() => new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 }
 
-public sealed class RepositoryRegistryValidationException(string message) : Exception(message);
+public sealed class RepositoryRegistryValidationException : Exception
+{
+    public RepositoryRegistryValidationException(string message, string publicTitle = "Invalid repository configuration",
+        Exception? innerException = null) : base(message, innerException) => PublicTitle = publicTitle;
+
+    public string PublicTitle { get; }
+}

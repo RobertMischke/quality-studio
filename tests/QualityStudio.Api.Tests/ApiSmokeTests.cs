@@ -246,7 +246,8 @@ public sealed class ApiSmokeTests : IAsyncLifetime
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             var problem = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
-            Assert.Contains("not a Git repository", problem.GetProperty("detail").GetString());
+            Assert.Equal("Repository path is not a Git repository", problem.GetProperty("title").GetString());
+            Assert.False(problem.TryGetProperty("detail", out _));
         }
         finally
         {
@@ -318,6 +319,7 @@ public sealed class ApiSmokeTests : IAsyncLifetime
                 new Dictionary<string, string?>
                 {
                     ["QualityStudio:RepositoryRoot"] = root,
+                    ["QualityStudio:AllowedRoots:0"] = Path.GetDirectoryName(root),
                     ["AgentStudio:BaseUrl"] = "http://agent-studio.test",
                     ["AgentStudio:ClientId"] = "quality-studio-test",
                     ["AgentStudio:Project"] = "QS",

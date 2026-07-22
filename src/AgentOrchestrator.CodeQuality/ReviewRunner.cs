@@ -392,11 +392,22 @@ public sealed class ReviewRunner
 
     private static void EnsureContained(string root, string file, bool allowRoot = false)
     {
-        if (allowRoot && string.Equals(root.TrimEnd(Path.DirectorySeparatorChar), file.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)) return;
-        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
-        if (!file.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedFile = Path.GetFullPath(file).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (allowRoot && string.Equals(normalizedRoot, normalizedFile, comparison)) return;
+        if (!normalizedFile.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, comparison))
         {
             throw new ArgumentException("Review target must be inside the repository root.");
+        }
+        var current = normalizedRoot;
+        foreach (var segment in Path.GetRelativePath(normalizedRoot, normalizedFile).Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if ((File.Exists(current) || Directory.Exists(current)) &&
+                File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                throw new ArgumentException("Review targets cannot traverse symbolic links or junctions.");
         }
     }
 

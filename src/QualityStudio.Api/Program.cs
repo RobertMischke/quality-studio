@@ -9,6 +9,9 @@ using System.Text.Json.Nodes;
 using System.Security.Cryptography;
 using QualityStudio.Api;
 using CodingAgentRunner.Quota;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddProblemDetails();
@@ -18,6 +21,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
 });
 builder.Services.Configure<RepositoryOptions>(builder.Configuration.GetSection(RepositoryOptions.SectionName));
+builder.Services.AddSingleton<ApiSecurity>();
+builder.Services.AddSingleton<ReviewMetaIndex>();
 builder.Services.AddSingleton<RepositoryRegistry>();
 builder.Services.AddSingleton<StalenessEvaluator>();
 builder.Services.AddSingleton<InputResolver>();
@@ -37,8 +42,34 @@ builder.Services.AddSingleton(_ => new QuotaService(
     store: FileQuotaCacheStore.Global()));
 var corsOptions = builder.Configuration.GetSection(RepositoryOptions.SectionName).Get<RepositoryOptions>()
     ?? new RepositoryOptions();
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = corsOptions.Security.MaxRequestBodyBytes;
+    options.Limits.MaxConcurrentConnections = corsOptions.Security.MaxConcurrentRequests;
+});
 builder.Services.AddCors(options => options.AddPolicy("dev-frontend", policy =>
     policy.WithOrigins(corsOptions.AllowedOrigins).AllowAnyHeader().AllowAnyMethod()));
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(_ =>
+        RateLimitPartition.GetConcurrencyLimiter("api-host", _ => new ConcurrencyLimiterOptions
+        {
+            PermitLimit = corsOptions.Security.MaxConcurrentRequests,
+            QueueLimit = 0,
+        }));
+    options.AddPolicy("spend", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Request.Headers[ApiSecurity.ClientIdHeader].ToString() is { Length: > 0 } clientId
+            ? clientId
+            : context.Connection.RemoteIpAddress?.ToString() ?? "local",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = corsOptions.Security.SpendRequestsPerMinute,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true,
+        }));
+});
 
 var app = builder.Build();
 app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
@@ -47,7 +78,7 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     var (status, title) = exception switch
     {
         ArgumentException => (StatusCodes.Status400BadRequest, "Invalid repository path"),
-        RepositoryRegistryValidationException => (StatusCodes.Status400BadRequest, "Invalid repository configuration"),
+        RepositoryRegistryValidationException validation => (StatusCodes.Status400BadRequest, validation.PublicTitle),
         KeyNotFoundException => (StatusCodes.Status404NotFound, "Repository not found"),
         FileNotFoundException => (StatusCodes.Status404NotFound, "File not found"),
         DirectoryNotFoundException => (StatusCodes.Status503ServiceUnavailable, "Repository unavailable"),
@@ -60,15 +91,100 @@ app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
     };
     var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("QualityStudio.Api.Errors");
     logger.LogError(new EventId(1000, "ApiRequestFailed"), exception, "API request failed with status {StatusCode}", status);
-    await Results.Problem(statusCode: status, title: title, detail: exception?.Message).ExecuteAsync(context);
+    await Results.Problem(statusCode: status, title: title).ExecuteAsync(context);
 }));
 app.UseStatusCodePages();
 app.UseCors("dev-frontend");
+app.UseRouting();
+
+var apiSecurity = app.Services.GetRequiredService<ApiSecurity>();
+if (apiSecurity.RequireHttps)
+{
+    app.UseHsts();
+}
+app.Use(async (context, next) =>
+{
+    if (!context.Request.Path.StartsWithSegments("/api"))
+    {
+        await next();
+        return;
+    }
+
+    if (apiSecurity.RequireHttps && !context.Request.IsHttps)
+    {
+        await Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "HTTPS is required").ExecuteAsync(context);
+        return;
+    }
+
+    if (context.Request.ContentLength > apiSecurity.MaxRequestBodyBytes)
+    {
+        await Results.Problem(statusCode: StatusCodes.Status413PayloadTooLarge, title: "Request body is too large").ExecuteAsync(context);
+        return;
+    }
+    var bodySizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+    if (bodySizeFeature is { IsReadOnly: false }) bodySizeFeature.MaxRequestBodySize = apiSecurity.MaxRequestBodyBytes;
+
+    var identity = apiSecurity.Authenticate(context);
+    if (identity is null)
+    {
+        context.Response.Headers.WWWAuthenticate = "Bearer";
+        await Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Authentication required").ExecuteAsync(context);
+        return;
+    }
+    apiSecurity.SetIdentity(context, identity);
+
+    if (HttpMethods.IsPost(context.Request.Method) || HttpMethods.IsPut(context.Request.Method) ||
+        HttpMethods.IsPatch(context.Request.Method) || HttpMethods.IsDelete(context.Request.Method))
+    {
+        if (!apiSecurity.IsMutationClientHeaderValid(context, identity))
+        {
+            await Results.Problem(statusCode: StatusCodes.Status401Unauthorized,
+                title: "A matching X-Client-Id is required for mutations").ExecuteAsync(context);
+            return;
+        }
+    }
+
+    var path = context.Request.Path.Value ?? string.Empty;
+    var repositoryId = RouteRepositoryId(context);
+    var isRepositoryCollection = string.Equals(path, "/api/repos", StringComparison.OrdinalIgnoreCase);
+    var isImport = string.Equals(path, "/api/repos/import-from-agent-studio", StringComparison.OrdinalIgnoreCase);
+    if ((HttpMethods.IsPost(context.Request.Method) && isRepositoryCollection) || isImport)
+    {
+        if (!identity.CanRegisterRepositories)
+        {
+            await Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "Repository registration is not permitted")
+                .ExecuteAsync(context);
+            return;
+        }
+    }
+    else if (repositoryId is not null && !identity.CanAccess(repositoryId))
+    {
+        await Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Repository not found").ExecuteAsync(context);
+        return;
+    }
+    else if (repositoryId is null && !isRepositoryCollection &&
+             !string.Equals(path, "/api/quotas", StringComparison.OrdinalIgnoreCase) &&
+             !identity.CanAccess(RepositoryRegistry.DefaultRepositoryId))
+    {
+        await Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Repository not found").ExecuteAsync(context);
+        return;
+    }
+
+    await next();
+});
+app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "QualityStudio.Api" }));
 
-app.MapGet("/api/repos", (bool? includeArchived, RepositoryRegistry registry) =>
-    Results.Ok(new { repositories = registry.List(includeArchived == true), defaultRepositoryId = RepositoryRegistry.DefaultRepositoryId }));
+app.MapGet("/api/repos", (HttpContext context, bool? includeArchived, RepositoryRegistry registry, ApiSecurity security) =>
+    Results.Ok(new
+    {
+        repositories = registry.List(includeArchived == true)
+            .Where(repository => security.Identity(context).CanAccess(repository.Id)),
+        defaultRepositoryId = security.Identity(context).CanAccess(RepositoryRegistry.DefaultRepositoryId)
+            ? RepositoryRegistry.DefaultRepositoryId
+            : null,
+    }));
 
 app.MapPost("/api/repos", async (RepositoryRegistrationRequest request, RepositoryRegistry registry, CancellationToken cancellationToken) =>
 {
@@ -99,8 +215,8 @@ app.MapGet("/api/usage", Usage);
 app.MapGet("/api/repos/{repoId}/usage", Usage);
 app.MapGet("/api/quotas", Quotas);
 
-app.MapPost("/api/review", StartReview);
-app.MapPost("/api/repos/{repoId}/review", StartReview);
+app.MapPost("/api/review", StartReview).RequireRateLimiting("spend");
+app.MapPost("/api/repos/{repoId}/review", StartReview).RequireRateLimiting("spend");
 app.MapGet("/api/review/runs", ReviewRuns);
 app.MapGet("/api/repos/{repoId}/review/runs", ReviewRuns);
 app.MapGet("/api/review/runs/{id}", ReviewRun);
@@ -114,8 +230,8 @@ app.MapDelete("/api/repos/{repoId}/review/runs/{id}", CancelReview);
 
 app.MapGet("/api/handover", HandoverConfiguration);
 app.MapGet("/api/repos/{repoId}/handover", HandoverConfiguration);
-app.MapPost("/api/handover", Handover);
-app.MapPost("/api/repos/{repoId}/handover", Handover);
+app.MapPost("/api/handover", Handover).RequireRateLimiting("spend");
+app.MapPost("/api/repos/{repoId}/handover", Handover).RequireRateLimiting("spend");
 app.MapPost("/api/threads", MutateThread);
 app.MapPost("/api/repos/{repoId}/threads", MutateThread);
 
@@ -283,9 +399,7 @@ static IResult Inputs(HttpContext context, RepositoryRegistry registry, InputRes
 {
     var stopwatch = Stopwatch.StartNew();
     var (registration, repository) = ResolveRepository(context, registry);
-    var globalDirectory = string.IsNullOrWhiteSpace(registration.GlobalInputsDirectory)
-        ? Environment.GetEnvironmentVariable("QUALITY_GLOBAL_INPUTS")
-        : registration.GlobalInputsDirectory;
+    var globalDirectory = registration.GlobalInputsDirectory;
     var kinds = registration.EnabledReviewKinds.ToDictionary(
         kind => kind,
         kind => resolver.Resolve(repository.Root, kind, ReviewLevel.File,
@@ -427,6 +541,8 @@ static async Task<IResult> Handover(
     var (registration, repository) = ResolveRepository(context, registry);
     var filePath = repository.NormalizeRelativePath(request.FilePath);
     repository.ResolveFile(filePath);
+    var metaReferencePath = request.MetaReference.Split('#', 2)[0];
+    if (!string.IsNullOrWhiteSpace(metaReferencePath)) repository.NormalizeRelativePath(metaReferencePath);
     var result = await client.CreateTaskAsync(new FindingTaskTemplate(
         request.FindingSummary,
         filePath,
@@ -528,7 +644,7 @@ static (RepositoryRegistration Registration, RepositoryAccess Access) ResolveRep
 {
     var id = RouteRepositoryId(context);
     var registration = registry.Get(id);
-    return (registration, new RepositoryAccess(registration.RootPath));
+    return (registration, registry.Access(registration.Id));
 }
 
 static string? RouteRepositoryId(HttpContext context) =>

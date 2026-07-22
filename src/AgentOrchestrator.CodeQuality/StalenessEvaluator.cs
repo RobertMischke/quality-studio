@@ -119,7 +119,7 @@ public sealed class StalenessEvaluator
             ReviewMetadata? metadata;
             try
             {
-                await using var stream = File.OpenRead(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+                await using var stream = File.OpenRead(ResolveWithinRoot(root, relativePath));
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
                 var json = document.RootElement;
@@ -234,10 +234,21 @@ public sealed class StalenessEvaluator
     private static string ResolveWithinRoot(string root, string relativePath)
     {
         var absolutePath = Path.GetFullPath(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
-        if (!absolutePath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!absolutePath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, comparison))
         {
             throw new StalenessScanException($"Review subject escapes the repository: {relativePath}");
+        }
+
+        var current = normalizedRoot;
+        foreach (var segment in Path.GetRelativePath(normalizedRoot, absolutePath).Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if ((File.Exists(current) || Directory.Exists(current)) &&
+                File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                throw new StalenessScanException("Review subjects cannot traverse symbolic links or junctions.");
         }
 
         return absolutePath;
