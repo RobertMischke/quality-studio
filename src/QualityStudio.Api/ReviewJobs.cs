@@ -192,7 +192,8 @@ public sealed class ReviewJobService : BackgroundService
             SubjectFiles: files,
             DisplayName: node.Name,
             SubjectUnits: level == ReviewLevel.File ? null : item.Files.Select(file => new ReviewSubjectFile(file.Id, file.Path)).ToArray(),
-            AggregateControls: AggregateControls(node));
+            AggregateControls: AggregateControls(node),
+            AggregateExclusions: level == ReviewLevel.File ? null : node.Exclusions);
 
     private static IReadOnlyList<string>? AggregateControls(HierarchyNode node) => node.Level switch
     {

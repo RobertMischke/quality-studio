@@ -67,7 +67,7 @@ public static class ReviewMetaDiscovery
                         return new AggregateMemberHash(candidate.Id, candidate.Path, subjectHash);
                     }).ToArray();
                 if (!StringComparer.Ordinal.Equals(input.GetProperty("contentHash").GetString(),
-                        ReviewSubjectHasher.ComputeAggregateMembersHash(members))) return true;
+                        ReviewSubjectHasher.ComputeAggregateMembersHash(members, node.Exclusions))) return true;
                 continue;
             }
             if (selector is not ("file" or "aggregate-control"))
