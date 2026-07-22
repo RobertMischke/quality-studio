@@ -11,4 +11,6 @@ public sealed class RepositoryOptions
     public string? GlobalInputsDirectory { get; set; }
 
     public int InputBudgetCharacters { get; set; } = AgentOrchestrator.CodeQuality.InputResolver.DefaultBudgetCharacters;
+
+    public long? DefaultReviewTokenCap { get; set; } = 100_000;
 }

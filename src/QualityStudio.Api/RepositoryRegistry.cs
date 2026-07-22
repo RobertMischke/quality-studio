@@ -11,7 +11,9 @@ public sealed record RepositoryRegistration(
     string? GlobalInputsDirectory,
     int InputBudgetCharacters,
     IReadOnlyList<string> EnabledReviewKinds,
-    bool Archived = false);
+    bool Archived = false,
+    long? DefaultReviewTokenCap = null,
+    decimal? DefaultReviewCostCap = null);
 
 public sealed record RepositoryRegistrationRequest(
     string? Id,
@@ -19,7 +21,9 @@ public sealed record RepositoryRegistrationRequest(
     string RootPath,
     string? GlobalInputsDirectory,
     int? InputBudgetCharacters,
-    IReadOnlyList<string>? EnabledReviewKinds);
+    IReadOnlyList<string>? EnabledReviewKinds,
+    long? DefaultReviewTokenCap = null,
+    decimal? DefaultReviewCostCap = null);
 
 public sealed class RepositoryRegistry
 {
@@ -167,7 +171,8 @@ public sealed class RepositoryRegistry
             root,
             NormalizeOptionalPath(legacyOptions.GlobalInputsDirectory, root),
             legacyOptions.InputBudgetCharacters,
-            SupportedKinds);
+            SupportedKinds,
+            DefaultReviewTokenCap: legacyOptions.DefaultReviewTokenCap);
         var result = new List<RepositoryRegistration> { seeded };
         entries = result;
         Directory.CreateDirectory(Path.GetDirectoryName(registryPath)!);
@@ -220,8 +225,17 @@ public sealed class RepositoryRegistry
             throw new RepositoryRegistryValidationException("Select at least one supported review kind: code, security, or performance.");
         }
 
+        if (request.DefaultReviewTokenCap.HasValue && request.DefaultReviewCostCap.HasValue)
+            throw new RepositoryRegistryValidationException("Choose either a default token cap or a default cost cap, not both.");
+        if (request.DefaultReviewTokenCap is <= 0 or > 1_000_000_000)
+            throw new RepositoryRegistryValidationException("Default review token cap must be between 1 and 1,000,000,000 tokens.");
+        if (request.DefaultReviewCostCap is <= 0 or > 1_000_000)
+            throw new RepositoryRegistryValidationException("Default review cost cap must be between 0 and 1,000,000.");
+
         return new RepositoryRegistration(id, request.DisplayName.Trim(), root,
-            NormalizeOptionalPath(request.GlobalInputsDirectory, root), budget, kinds);
+            NormalizeOptionalPath(request.GlobalInputsDirectory, root), budget, kinds,
+            DefaultReviewTokenCap: request.DefaultReviewTokenCap,
+            DefaultReviewCostCap: request.DefaultReviewCostCap);
     }
 
     private async Task PersistAsync(CancellationToken cancellationToken)
