@@ -19,7 +19,7 @@ export class ReviewActions {
   readonly model = signal('');
   readonly fileCount = computed(() => this.countFiles(this.node()));
   readonly activeOnNode = computed(() => this.api.reviewRuns().some(run =>
-    run.path === this.node()?.path && (run.state === 'queued' || run.state === 'running')));
+    run.path === this.node()?.path && (run.state === 'queued' || run.state === 'running' || run.state === 'paused')));
   readonly reviewKinds: ReviewKind[] = ['code', 'security', 'performance'];
 
   async start(): Promise<void> {

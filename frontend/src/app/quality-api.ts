@@ -91,7 +91,7 @@ export interface AgentStudioImportResult {
   reason: string | null;
 }
 export interface AgentStudioImportResponse { results: AgentStudioImportResult[]; imported: number; skipped: number; failed: number; }
-export type ReviewRunState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type ReviewRunState = 'queued' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled';
 export interface ReviewFileProgress { path: string; state: ReviewRunState; startedAt: string | null; finishedAt: string | null; error: string | null; }
 export interface ReviewRun {
   id: string; repositoryId: string; path: string; level: string; kind: ReviewKind; model: string | null; cliType: string;
@@ -353,6 +353,25 @@ export class QualityApi {
       const openPath = this.file()?.path;
       await this.loadTree();
       if (openPath) await this.loadFile(openPath);
+      this.scheduleReviewPoll();
+    } catch (error) {
+      this.reviewError.set(this.errorMessage(error));
+    }
+  }
+
+  async pauseReview(id: string): Promise<void> {
+    try {
+      const run = await firstValueFrom(this.http.post<ReviewRun>(`${this.repositoryApiBase()}/review/runs/${encodeURIComponent(id)}/pause`, {}));
+      this.reviewRuns.update(runs => runs.map(candidate => candidate.id === run.id ? run : candidate));
+    } catch (error) {
+      this.reviewError.set(this.errorMessage(error));
+    }
+  }
+
+  async resumeReview(id: string): Promise<void> {
+    try {
+      const run = await firstValueFrom(this.http.post<ReviewRun>(`${this.repositoryApiBase()}/review/runs/${encodeURIComponent(id)}/resume`, {}));
+      this.reviewRuns.update(runs => runs.map(candidate => candidate.id === run.id ? run : candidate));
       this.scheduleReviewPoll();
     } catch (error) {
       this.reviewError.set(this.errorMessage(error));

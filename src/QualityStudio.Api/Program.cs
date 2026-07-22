@@ -105,6 +105,10 @@ app.MapGet("/api/review/runs", ReviewRuns);
 app.MapGet("/api/repos/{repoId}/review/runs", ReviewRuns);
 app.MapGet("/api/review/runs/{id}", ReviewRun);
 app.MapGet("/api/repos/{repoId}/review/runs/{id}", ReviewRun);
+app.MapPost("/api/review/runs/{id}/pause", PauseReview);
+app.MapPost("/api/repos/{repoId}/review/runs/{id}/pause", PauseReview);
+app.MapPost("/api/review/runs/{id}/resume", ResumeReview);
+app.MapPost("/api/repos/{repoId}/review/runs/{id}/resume", ResumeReview);
 app.MapDelete("/api/review/runs/{id}", CancelReview);
 app.MapDelete("/api/repos/{repoId}/review/runs/{id}", CancelReview);
 
@@ -362,10 +366,15 @@ static IResult Quotas(QuotaService quotas, ILogger<Program> logger, Cancellation
     });
 }
 
-static IResult StartReview(HttpContext context, StartReviewRequest request, RepositoryRegistry registry, ReviewJobService jobs)
+static async Task<IResult> StartReview(
+    HttpContext context,
+    StartReviewRequest request,
+    RepositoryRegistry registry,
+    ReviewJobService jobs,
+    CancellationToken cancellationToken)
 {
     var repository = registry.Get(RouteRepositoryId(context));
-    var run = jobs.Enqueue(repository.Id, request);
+    var run = await jobs.EnqueueAsync(repository.Id, request, cancellationToken);
     var basePath = RouteRepositoryId(context) is null ? "/api/review/runs" : $"/api/repos/{Uri.EscapeDataString(repository.Id)}/review/runs";
     return Results.Accepted($"{basePath}/{run.Id}", run);
 }
@@ -386,6 +395,18 @@ static IResult CancelReview(HttpContext context, string id, RepositoryRegistry r
 {
     var repository = registry.Get(RouteRepositoryId(context));
     return Results.Ok(jobs.Cancel(repository.Id, id));
+}
+
+static IResult PauseReview(HttpContext context, string id, RepositoryRegistry registry, ReviewJobService jobs)
+{
+    var repository = registry.Get(RouteRepositoryId(context));
+    return Results.Ok(jobs.Pause(repository.Id, id));
+}
+
+static IResult ResumeReview(HttpContext context, string id, RepositoryRegistry registry, ReviewJobService jobs)
+{
+    var repository = registry.Get(RouteRepositoryId(context));
+    return Results.Ok(jobs.Resume(repository.Id, id));
 }
 
 static IResult HandoverConfiguration(HttpContext context, RepositoryRegistry registry, AgentStudioTaskOptions options)

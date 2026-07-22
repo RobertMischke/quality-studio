@@ -159,6 +159,19 @@ public sealed class ApiSmokeTests : IAsyncLifetime
         var accepted = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
         var id = accepted.GetProperty("id").GetString()!;
         Assert.Equal(1, accepted.GetProperty("totalFiles").GetInt32());
+        var runDirectory = Path.Combine(repositoryRoot, ".quality", "runs", id);
+        using (var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(
+                   Path.Combine(runDirectory, "manifest.json"), TestContext.Current.CancellationToken)))
+        {
+            Assert.Equal("Sample.cs", manifest.RootElement.GetProperty("node").GetProperty("path").GetString());
+            var target = Assert.Single(manifest.RootElement.GetProperty("targets").EnumerateArray());
+            Assert.Equal(
+                await ReviewSubjectHasher.ComputeFileContentHashAsync(
+                    Path.Combine(repositoryRoot, "Sample.cs"), TestContext.Current.CancellationToken),
+                target.GetProperty("subjectHash").GetString());
+        }
+        Assert.True(File.Exists(Path.Combine(runDirectory, "progress.jsonl")));
+        Assert.True(File.Exists(Path.Combine(runDirectory, "status.json")));
 
         JsonElement run = default;
         for (var attempt = 0; attempt < 50; attempt++)
