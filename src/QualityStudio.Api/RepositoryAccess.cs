@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using AgentOrchestrator.CodeQuality;
 
 namespace QualityStudio.Api;
 
@@ -64,7 +66,9 @@ public sealed class RepositoryAccess
         return absolute;
     }
 
-    public IReadOnlyList<JsonElement> ReadMetaDocuments(string relativePath)
+    public IReadOnlyList<JsonElement> ReadMetaDocuments(
+        string relativePath,
+        IReadOnlyDictionary<string, FindingStateRecord>? states = null)
     {
         var result = new List<JsonElement>();
         foreach (var candidate in Directory.EnumerateFiles(root, "*.json", ConfinedEnumeration)
@@ -75,7 +79,16 @@ public sealed class RepositoryAccess
                 unit.TryGetProperty("path", out var unitPath) &&
                 string.Equals(NormalizeStoredPath(unitPath.GetString()), relativePath, StringComparison.Ordinal))
             {
-                result.Add(document.RootElement.Clone());
+                if (states is null)
+                {
+                    result.Add(document.RootElement.Clone());
+                }
+                else
+                {
+                    var metadata = JsonNode.Parse(document.RootElement.GetRawText())!.AsObject();
+                    using var projected = JsonDocument.Parse(FindingStateProjection.Apply(metadata, states).ToJsonString());
+                    result.Add(projected.RootElement.Clone());
+                }
             }
         }
 
