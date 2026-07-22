@@ -588,7 +588,7 @@
     "finding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "aspect", "severity", "title", "description", "recommendation", "locations"],
+      "required": ["id", "aspect", "severity", "ruleId", "title", "description", "recommendation", "locations"],
       "properties": {
         "id": {
           "type": "string",

@@ -56,7 +56,7 @@ public sealed partial class ReviewResponseParser
         foreach (var findingNode in findings)
         {
             var finding = findingNode?.AsObject() ?? throw Invalid("finding");
-            foreach (var property in new[] { "id", "aspect", "severity", "title", "description", "recommendation" })
+            foreach (var property in new[] { "id", "aspect", "severity", "ruleId", "title", "description", "recommendation" })
             {
                 RequireString(finding, property);
             }

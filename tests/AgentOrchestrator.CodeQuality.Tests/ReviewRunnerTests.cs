@@ -59,7 +59,7 @@ public sealed class ReviewResponseParserTests
     {
         var response = ValidResponse.Replace(
             "\"findings\": []",
-            "\"findings\": [{\"id\":\"bad-id\",\"aspect\":\"correctness\",\"severity\":\"high\",\"title\":\"Bad\",\"description\":\"Bad.\",\"recommendation\":\"Fix.\",\"locations\":[]}]",
+            "\"findings\": [{\"id\":\"bad-id\",\"aspect\":\"correctness\",\"severity\":\"high\",\"ruleId\":\"built-in:code\",\"title\":\"Bad\",\"description\":\"Bad.\",\"recommendation\":\"Fix.\",\"locations\":[]}]",
             StringComparison.Ordinal);
 
         var exception = Assert.Throws<ReviewResponseException>(() => new ReviewResponseParser().Parse(response));
@@ -130,7 +130,7 @@ public sealed class ReviewResponseParserTests
         """;
 
     internal const string ValidFinding = """
-        {"id":"correctness-1","aspect":"correctness","severity":"medium","title":"Risk","description":"A risk.","recommendation":"Fix it.","locations":[{"path":"src/Small.cs","range":{"start":{"line":3,"column":1},"end":{"line":3,"column":4}}}]}
+        {"id":"correctness-1","aspect":"correctness","severity":"medium","ruleId":"secure-boundaries","title":"Risk","description":"A risk.","recommendation":"Fix it.","locations":[{"path":"src/Small.cs","range":{"start":{"line":3,"column":1},"end":{"line":3,"column":4}}}]}
         """;
 }
 

@@ -73,6 +73,7 @@
       "id": "prefer-const-name",
       "aspect": "correctness",
       "severity": "info",
+      "ruleId": "built-in:code",
       "title": "Name could express intent",
       "description": "The name is intentionally short for this conformance sample.",
       "recommendation": "Use a domain name in production code.",
